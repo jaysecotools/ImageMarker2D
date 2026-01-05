@@ -901,18 +901,21 @@
             // Automatically select and edit the newly created marker
             selectMarker(markerData.id);
             
-            // Populate form with default values for the new marker
-            markerTitle.value = markerData.title;
-            markerDescription.value = markerData.description;
-            markerLink.value = markerData.link;
-            markerVideo.value = markerData.video;
-            markerAudio.value = markerData.audio;
-            
-            // Show delete button since we're now in edit mode
-            deleteMarker.style.display = 'inline-block';
-            
-            // Show marker info popup
-            showMarkerInfo(markerData);
+// Populate form with default values for the new marker
+markerTitle.value = 'New ' + currentMarkerType.charAt(0).toUpperCase() + currentMarkerType.slice(1) + ' Marker';
+markerDescription.value = 'Click Save Marker to add details';
+markerLink.value = '';
+markerVideo.value = '';
+markerAudio.value = '';
+
+// Update fields visibility based on marker type
+updateFieldsVisibility();
+
+// Show delete button since we're now in edit mode
+deleteMarker.style.display = 'inline-block';
+
+// Show marker info popup
+showMarkerInfo(markerData);
         }
 
         function validateMarkerData(marker) {
@@ -1162,48 +1165,82 @@
             markerPopup.style.display = 'none';
         }
 
-        function saveMarkerHandler() {
-            if (selectedMarkerId) {
-                // Update existing marker
-                const marker = markers.find(m => m.id === selectedMarkerId);
-                if (marker) {
-                    // Validate the data before saving
-                    const errors = validateMarkerData({
-                        title: markerTitle.value,
-                        type: currentMarkerType,
-                        link: markerLink.value,
-                        video: markerVideo.value,
-                        audio: markerAudio.value
-                    });
-                    
-                    if (errors.length > 0) {
-                        alert('Please fix the following errors:\n' + errors.join('\n'));
-                        return;
-                    }
-                    
-                    // Update marker data
-                    marker.title = markerTitle.value;
-                    marker.description = markerDescription.value;
-                    marker.link = markerLink.value;
-                    marker.video = markerVideo.value;
-                    marker.audio = markerAudio.value;
-                    marker.type = currentMarkerType;
-                    
-                    updateMarkerList();
-                    renderAllMarkers();
-                    saveToHistory();
-                    
-                    // Update the popup if it's open
-                    if (markerPopup.style.display === 'block') {
-                        showMarkerInfo(marker);
-                    }
-                    
-                    alert('Marker updated!');
-                }
-            } else {
-                alert('Please click on the image to add a marker first, or select an existing marker to edit.');
+function saveMarkerHandler() {
+    if (selectedMarkerId) {
+        // Update existing marker
+        const marker = markers.find(m => m.id === selectedMarkerId);
+        if (marker) {
+            // Validate the data before saving
+            const errors = validateMarkerData({
+                title: markerTitle.value,
+                type: currentMarkerType,
+                link: markerLink.value,
+                video: markerVideo.value,
+                audio: markerAudio.value
+            });
+            
+            if (errors.length > 0) {
+                alert('Please fix the following errors:\n' + errors.join('\n'));
+                return;
             }
+            
+            // Preserve the original position coordinates
+            const originalX = marker.x;
+            const originalY = marker.y;
+            const originalDisplayX = marker.displayX;
+            const originalDisplayY = marker.displayY;
+            
+            // Update marker data
+            marker.title = markerTitle.value;
+            marker.description = markerDescription.value;
+            marker.link = markerLink.value;
+            marker.video = markerVideo.value;
+            marker.audio = markerAudio.value;
+            marker.type = currentMarkerType;
+            
+            // Keep the original coordinates
+            marker.x = originalX;
+            marker.y = originalY;
+            marker.displayX = originalDisplayX;
+            marker.displayY = originalDisplayY;
+            
+            updateMarkerList();
+            
+            // Just update the specific marker's visual, don't recalculate all positions
+            const markerElement = document.querySelector(`.marker[data-id="${selectedMarkerId}"]`);
+            if (markerElement) {
+                // Remove all existing classes and add the correct ones
+                markerElement.className = 'marker';
+                markerElement.classList.add(marker.type);
+                if (markerElement.classList.contains('selected')) {
+                    markerElement.classList.add('selected');
+                }
+                
+                // Update the icon
+                let icon = '';
+                if (marker.type === 'info') icon = '<i class="fas fa-info-circle"></i>';
+                else if (marker.type === 'link') icon = '<i class="fas fa-link"></i>';
+                else if (marker.type === 'video') icon = '<i class="fas fa-video"></i>';
+                else if (marker.type === 'audio') icon = '<i class="fas fa-volume-up"></i>';
+                else if (marker.type === 'warning') icon = '<i class="fas fa-exclamation-triangle"></i>';
+                else if (marker.type === 'question') icon = '<i class="fas fa-question-circle"></i>';
+                
+                markerElement.innerHTML = icon;
+            }
+            
+            saveToHistory();
+            
+            // Update the popup if it's open
+            if (markerPopup.style.display === 'block') {
+                showMarkerInfo(marker);
+            }
+            
+            alert('Marker updated!');
         }
+    } else {
+        alert('Please click on the image to add a marker first, or select an existing marker to edit.');
+    }
+}
 
         function deleteMarkerHandler() {
             if (selectedMarkerId && confirm('Delete this marker?')) {
