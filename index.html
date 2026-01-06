@@ -1,3 +1,8 @@
+<!-- NOTES:
+THIS VERSION WORKS
+Marker coordinates have been corrected. Markers can be selected in the image and edited in the main side panel. Undo and redo buttons now work. Markers display (and in correct locations) in the exported file.
+FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by using the main panel and selecting markers within the image). -->
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -194,6 +199,7 @@
         }
         .marker-item.selected { 
             background: rgba(0, 180, 216, 0.15); 
+            border-left-color: #90e0ef;
         }
         .marker-item-header { 
             display: flex; 
@@ -298,6 +304,7 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.3); 
             transition: all 0.2s; 
             z-index: 10; 
+            border: 2px solid white;
         }
         .marker:hover { 
             transform: translate(-50%, -50%) scale(1.2); 
@@ -639,479 +646,339 @@
         </div>
     </div>
 
-    <!-- ENHANCED JAVASCRIPT -->
-    <script>
-        // Marker themes
-        const markerThemes = {
-            info: { color: '#4cc9f0', icon: 'info-circle' },
-            link: { color: '#4361ee', icon: 'link' },
-            video: { color: '#f72585', icon: 'video' },
-            audio: { color: '#7209b7', icon: 'volume-up' },
-            warning: { color: '#f8961e', icon: 'exclamation-triangle' },
-            question: { color: '#2a9d8f', icon: 'question-circle' }
-        };
+<script>
+    // ====================== APPLICATION STATE ======================
+    class AppState {
+        constructor() {
+            this.markers = [];
+            this.currentImage = null;
+            this.selectedMarkerId = null;
+            this.currentMarkerType = 'info';
+            this.history = [];
+            this.historyIndex = -1;
+            this.previewMarker = null;
+        }
 
-        // State management
-        let markers = [];
-        let currentMarkerType = 'info';
-        let selectedMarkerId = null;
-        let currentImage = null;
-        let previewMarker = null;
-        let history = [];
-        let historyIndex = -1;
-        let isMouseOverImage = false;
+        addMarker(marker) {
+            this.markers.push(marker);
+            this.saveToHistory();
+        }
 
-        // DOM elements
-        const fileInput = document.getElementById('imageUpload');
-        const uploadArea = document.getElementById('uploadArea');
-        const imageDisplay = document.getElementById('imageDisplay');
-        const imageContainer = document.getElementById('imageContainer');
-        const emptyState = document.getElementById('emptyState');
-        const markerTypes = document.querySelectorAll('.marker-type');
-        const markerTitle = document.getElementById('markerTitle');
-        const markerDescription = document.getElementById('markerDescription');
-        const markerLink = document.getElementById('markerLink');
-        const markerVideo = document.getElementById('markerVideo');
-        const markerAudio = document.getElementById('markerAudio');
-        const saveMarker = document.getElementById('saveMarker');
-        const deleteMarker = document.getElementById('deleteMarker');
-        const clearForm = document.getElementById('clearForm');
-        const clearMarkers = document.getElementById('clearMarkers');
-        const markerList = document.getElementById('markerList');
-        const saveProject = document.getElementById('saveProjectBtn');
-        const loadProject = document.getElementById('loadProjectBtn');
-        const exportHTML = document.getElementById('exportBtn');
-        const markerPopup = document.getElementById('markerPopup');
-        const popupTitle = document.getElementById('popupTitle');
-        const popupDescription = document.getElementById('popupDescription');
-        const popupLink = document.getElementById('popupLink');
-        const popupMedia = document.getElementById('popupMedia');
-        const closePopup = document.getElementById('closePopup');
-        const markerSearch = document.getElementById('markerSearch');
-        const undoBtn = document.getElementById('undoBtn');
-        const redoBtn = document.getElementById('redoBtn');
-        const copyCodeBtn = document.getElementById('copyCodeBtn');
-        const downloadBtn = document.getElementById('downloadBtn');
-        const closeExportBtn = document.getElementById('closeExportBtn');
+        updateMarker(id, updates) {
+            const index = this.markers.findIndex(m => m.id === id);
+            if (index !== -1) {
+                this.markers[index] = { ...this.markers[index], ...updates };
+                this.saveToHistory();
+                return this.markers[index];
+            }
+            return null;
+        }
 
-        // Initialize app
-        function init() {
-            console.log('App initialized');
+        deleteMarker(id) {
+            this.markers = this.markers.filter(m => m.id !== id);
+            this.saveToHistory();
+        }
+
+        clearMarkers() {
+            this.markers = [];
+            this.saveToHistory();
+        }
+
+        getMarker(id) {
+            return this.markers.find(m => m.id === id);
+        }
+
+        saveToHistory() {
+            // Trim future history if we're not at the end
+            this.history = this.history.slice(0, this.historyIndex + 1);
             
-            // Event listeners
-            uploadArea.addEventListener('click', () => fileInput.click());
-            fileInput.addEventListener('change', handleImageUpload);
-
-            // Drag and drop
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.classList.add('dragover');
+            // Save current state
+            this.history.push({
+                markers: JSON.parse(JSON.stringify(this.markers)),
+                image: this.currentImage ? { ...this.currentImage } : null
             });
-
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.classList.remove('dragover');
-            });
-
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.classList.remove('dragover');
-                if (e.dataTransfer.files.length) {
-                    const fakeEvent = { target: { files: e.dataTransfer.files } };
-                    handleImageUpload(fakeEvent);
-                }
-            });
-
-            // Marker type selection
-            markerTypes.forEach(type => {
-                type.addEventListener('click', () => {
-                    markerTypes.forEach(t => t.classList.remove('selected'));
-                    type.classList.add('selected');
-                    currentMarkerType = type.dataset.type;
-                    updateFieldsVisibility();
-                });
-            });
-
-            // Form buttons
-            saveMarker.addEventListener('click', saveMarkerHandler);
-            deleteMarker.addEventListener('click', deleteMarkerHandler);
-            clearForm.addEventListener('click', resetForm);
-            clearMarkers.addEventListener('click', clearMarkersHandler);
-            saveProject.addEventListener('click', saveProjectHandler);
-            loadProject.addEventListener('click', loadProjectHandler);
-            exportHTML.addEventListener('click', exportHTMLHandler);
-            closePopup.addEventListener('click', hidePopup);
             
-            // History controls
-            undoBtn.addEventListener('click', undo);
-            redoBtn.addEventListener('click', redo);
-
-            // Image interaction
-            imageContainer.addEventListener('click', addMarker);
-            imageContainer.addEventListener('mousemove', handleImageMouseMove);
-            imageContainer.addEventListener('mouseenter', () => isMouseOverImage = true);
-            imageContainer.addEventListener('mouseleave', () => {
-                isMouseOverImage = false;
-                if (previewMarker) {
-                    previewMarker.remove();
-                    previewMarker = null;
-                }
-            });
-
-            // Search
-            markerSearch.addEventListener('input', filterMarkers);
-
-            // Export modal
-            copyCodeBtn.addEventListener('click', copyExportCode);
-            downloadBtn.addEventListener('click', downloadExportFile);
-            closeExportBtn.addEventListener('click', () => {
-                document.getElementById('exportModal').classList.add('hidden');
-            });
-
-            // Initialize
-            updateFieldsVisibility();
-            saveToHistory();
-            document.addEventListener('keydown', handleKeyboardShortcuts);
+            this.historyIndex++;
+            this.updateHistoryControls();
         }
 
-        function handleImageUpload(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            if (!file.type.startsWith('image/')) {
-                alert('Please upload a valid image file');
-                return;
-            }
-            
-            if (file.size > 10 * 1024 * 1024) {
-                alert('Image file too large. Please choose a file smaller than 10MB');
-                return;
-            }
-
-            // Show loading
-            const originalHTML = uploadArea.innerHTML;
-            uploadArea.innerHTML = '<i class="fas fa-spinner fa-spin"></i><p>Loading image...</p>';
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    uploadArea.innerHTML = originalHTML;
-                    
-                    currentImage = {
-                        src: e.target.result,
-                        width: img.width,
-                        height: img.height,
-                        name: file.name
-                    };
-                    
-                    imageDisplay.src = currentImage.src;
-                    imageDisplay.style.display = 'block';
-                    emptyState.style.display = 'none';
-                    
-                    document.getElementById('currentImageName').textContent = file.name;
-                    document.getElementById('imageInfo').classList.remove('hidden');
-                    
-                    markers = [];
-                    updateMarkerList();
-                    renderAllMarkers();
-                    saveToHistory();
-                };
-                img.onerror = function() {
-                    uploadArea.innerHTML = originalHTML;
-                    alert('Error loading image. Please try another file.');
-                };
-                img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function handleImageMouseMove(event) {
-            if (!currentImage || !isMouseOverImage) return;
-            
-            // Remove existing preview
-            if (previewMarker) {
-                previewMarker.remove();
-                previewMarker = null;
-            }
-            
-            const containerRect = imageContainer.getBoundingClientRect();
-            const imgRect = imageDisplay.getBoundingClientRect();
-            
-            // Calculate mouse position relative to image
-            const mouseX = event.clientX - imgRect.left;
-            const mouseY = event.clientY - imgRect.top;
-            
-            // Only show preview if mouse is over the image
-            if (mouseX >= 0 && mouseX <= imgRect.width && mouseY >= 0 && mouseY <= imgRect.height) {
-                // Calculate display position relative to container
-                const displayX = event.clientX - containerRect.left;
-                const displayY = event.clientY - containerRect.top;
-                
-                showMarkerPreview(displayX, displayY);
-            }
-        }
-
-        function showMarkerPreview(x, y) {
-            previewMarker = document.createElement('div');
-            previewMarker.className = 'marker preview ' + currentMarkerType;
-            previewMarker.style.left = x + 'px';
-            previewMarker.style.top = y + 'px';
-            previewMarker.innerHTML = `<i class="fas fa-${markerThemes[currentMarkerType].icon}"></i>`;
-            imageContainer.appendChild(previewMarker);
-        }
-
-        function addMarker(event) {
-            if (!currentImage) {
-                alert('Please upload an image first!');
-                return;
-            }
-
-            // Don't add marker if clicking on existing marker or popup
-            if (event.target.classList.contains('marker') || 
-                event.target.closest('.marker-popup')) {
-                return;
-            }
-
-            // Remove preview
-            if (previewMarker) {
-                previewMarker.remove();
-                previewMarker = null;
-            }
-
-            const containerRect = imageContainer.getBoundingClientRect();
-            const imgRect = imageDisplay.getBoundingClientRect();
-            
-            // Calculate click position
-            const clickX = event.clientX - containerRect.left;
-            const clickY = event.clientY - containerRect.top;
-            
-            // Calculate position relative to image
-            const imageRelativeX = event.clientX - imgRect.left;
-            const imageRelativeY = event.clientY - imgRect.top;
-            
-            // Only add if within image bounds
-            if (imageRelativeX < 0 || imageRelativeX > imgRect.width || 
-                imageRelativeY < 0 || imageRelativeY > imgRect.height) {
-                return;
-            }
-            
-            // Convert to percentage coordinates
-            const imageX = (imageRelativeX / imgRect.width) * 100;
-            const imageY = (imageRelativeY / imgRect.height) * 100;
-
-            // Create new marker
-            const markerData = {
-                id: Date.now() + Math.random(),
-                type: currentMarkerType,
-                x: imageX,
-                y: imageY,
-                displayX: clickX,
-                displayY: clickY,
-                title: `New ${currentMarkerType.charAt(0).toUpperCase() + currentMarkerType.slice(1)} Marker`,
-                description: '',
-                link: '',
-                video: '',
-                audio: ''
-            };
-
-            markers.push(markerData);
-            renderMarker(markerData);
-            updateMarkerList();
-            saveToHistory();
-
-            // Select and edit the new marker
-            selectMarker(markerData.id);
-            populateFormWithMarker(markerData);
-            showMarkerInfo(markerData);
-        }
-
-        function populateFormWithMarker(marker) {
-            markerTitle.value = marker.title;
-            markerDescription.value = marker.description;
-            markerLink.value = marker.link;
-            markerVideo.value = marker.video;
-            markerAudio.value = marker.audio;
-            
-            // Set correct marker type
-            markerTypes.forEach(t => t.classList.remove('selected'));
-            document.querySelector(`.marker-type[data-type="${marker.type}"]`).classList.add('selected');
-            currentMarkerType = marker.type;
-            updateFieldsVisibility();
-            
-            deleteMarker.style.display = 'inline-block';
-        }
-
-        function validateMarkerData() {
-            const errors = [];
-            
-            if (!markerTitle.value.trim()) errors.push('Title is required');
-            
-            if (currentMarkerType === 'link' && markerLink.value && !isValidUrl(markerLink.value)) {
-                errors.push('Valid URL required for links');
-            }
-            if (currentMarkerType === 'video' && markerVideo.value && !isValidUrl(markerVideo.value)) {
-                errors.push('Valid URL required for videos');
-            }
-            if (currentMarkerType === 'audio' && markerAudio.value && !isValidUrl(markerAudio.value)) {
-                errors.push('Valid URL required for audio');
-            }
-            
-            return errors;
-        }
-
-        function isValidUrl(string) {
-            if (!string) return false;
-            try {
-                new URL(string);
+        undo() {
+            if (this.historyIndex > 0) {
+                this.historyIndex--;
+                const state = this.history[this.historyIndex];
+                this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
+                this.currentImage = state.image ? { ...state.image } : null;
+                this.updateHistoryControls();
                 return true;
-            } catch (_) {
-                return false;
             }
+            return false;
         }
 
-        function renderMarker(marker) {
-            const markerElement = document.createElement('div');
-            markerElement.className = 'marker ' + marker.type;
-            markerElement.style.left = marker.displayX + 'px';
-            markerElement.style.top = marker.displayY + 'px';
-            markerElement.dataset.id = marker.id;
-            markerElement.innerHTML = `<i class="fas fa-${markerThemes[marker.type].icon}"></i>`;
-
-            markerElement.addEventListener('click', (e) => {
-                e.stopPropagation();
-                selectMarker(marker.id);
-                showMarkerInfo(marker);
-            });
-
-            imageContainer.appendChild(markerElement);
-            return markerElement;
+        redo() {
+            if (this.historyIndex < this.history.length - 1) {
+                this.historyIndex++;
+                const state = this.history[this.historyIndex];
+                this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
+                this.currentImage = state.image ? { ...state.image } : null;
+                this.updateHistoryControls();
+                return true;
+            }
+            return false;
         }
 
-        function renderAllMarkers() {
-            // Clear existing markers
-            document.querySelectorAll('.marker:not(.preview)').forEach(marker => marker.remove());
+        updateHistoryControls() {
+            const undoBtn = document.getElementById('undoBtn');
+            const redoBtn = document.getElementById('redoBtn');
             
-            // Recalculate positions and render
-            if (currentImage) {
-                const imgRect = imageDisplay.getBoundingClientRect();
-                
-                markers.forEach(marker => {
-                    // Recalculate display position
-                    const displayX = (marker.x / 100) * imgRect.width;
-                    const displayY = (marker.y / 100) * imgRect.height;
-                    
-                    marker.displayX = displayX;
-                    marker.displayY = displayY;
-                    
-                    renderMarker(marker);
-                });
-            }
+            if (undoBtn) undoBtn.disabled = this.historyIndex <= 0;
+            if (redoBtn) redoBtn.disabled = this.historyIndex >= this.history.length - 1;
+        }
+    }
+
+    // ====================== MARKER MANAGER ======================
+    class MarkerManager {
+        constructor(state) {
+            this.state = state;
+            this.markerThemes = {
+                info: { color: '#4cc9f0', icon: 'info-circle' },
+                link: { color: '#4361ee', icon: 'link' },
+                video: { color: '#f72585', icon: 'video' },
+                audio: { color: '#7209b7', icon: 'volume-up' },
+                warning: { color: '#f8961e', icon: 'exclamation-triangle' },
+                question: { color: '#2a9d8f', icon: 'question-circle' }
+            };
+            this.setupGlobalEventDelegation();
         }
 
-        function selectMarker(markerId) {
+        setupGlobalEventDelegation() {
+            // Set up event delegation for marker cards
+            document.addEventListener('click', (e) => {
+                // Check if click is inside marker list
+                const markerList = document.getElementById('markerList');
+                if (!markerList.contains(e.target) && !e.target.closest('.marker-item')) return;
+                
+                // Find the closest marker item
+                const markerItem = e.target.closest('.marker-item');
+                if (!markerItem) return;
+                
+                const markerId = markerItem.dataset.id;
+                const marker = this.state.getMarker(markerId);
+                if (!marker) return;
+                
+                // Check which element was clicked
+                if (e.target.classList.contains('edit') || e.target.closest('.edit')) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    this.selectMarker(markerId);
+                    this.populateFormWithMarker(marker);
+                } 
+                else if (e.target.classList.contains('delete') || e.target.closest('.delete')) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (confirm('Delete this marker?')) {
+                        this.state.deleteMarker(markerId);
+                        this.renderAllMarkers();
+                        this.updateMarkerList();
+                        document.getElementById('markerPopup').style.display = 'none';
+                        document.getElementById('deleteMarker').style.display = 'none';
+                        this.resetForm();
+                    }
+                } 
+                else {
+                    // Clicked on the marker item itself
+                    this.selectMarker(markerId);
+                    this.showMarkerPopup(marker);
+                }
+            });
+        }
+
+        createMarkerElement(marker) {
+            // Remove any existing marker with same ID
+            const existingMarker = document.querySelector(`.marker[data-id="${marker.id}"]`);
+            if (existingMarker) existingMarker.remove();
+            
+            const element = document.createElement('div');
+            element.className = `marker ${marker.type}`;
+            element.dataset.id = marker.id;
+            
+            // Store percentage coordinates as data attributes
+            element.dataset.x = marker.x;
+            element.dataset.y = marker.y;
+            
+            element.innerHTML = `<i class="fas fa-${this.markerThemes[marker.type].icon}"></i>`;
+            
+            element.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.selectMarker(marker.id);
+                this.showMarkerPopup(marker);
+            });
+            
+            return element;
+        }
+
+        positionMarkerElement(element) {
+            const container = document.getElementById('imageContainer');
+            const img = document.getElementById('imageDisplay');
+            
+            if (!container || !img) return;
+            
+            const containerRect = container.getBoundingClientRect();
+            const imgRect = img.getBoundingClientRect();
+            
+            // Get the percentage coordinates
+            const percentX = parseFloat(element.dataset.x);
+            const percentY = parseFloat(element.dataset.y);
+            
+            // Calculate where the image starts within the container
+            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+            
+            // Calculate marker position in pixels relative to container
+            const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
+            const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
+            
+            element.style.left = `${markerX}px`;
+            element.style.top = `${markerY}px`;
+        }
+
+        renderAllMarkers() {
+            // Clear existing markers
+            document.querySelectorAll('.marker:not(.preview)').forEach(m => m.remove());
+            
+            // Render all markers
+            this.state.markers.forEach(marker => {
+                const element = this.createMarkerElement(marker);
+                document.getElementById('imageContainer').appendChild(element);
+                // Position the marker after adding to DOM
+                this.positionMarkerElement(element);
+            });
+        }
+
+        selectMarker(id) {
             // Deselect all
             document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
             document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
             
-            // Select clicked marker
-            const markerElement = document.querySelector(`.marker[data-id="${markerId}"]`);
-            const markerItem = document.querySelector(`.marker-item[data-id="${markerId}"]`);
+            // Select the marker
+            const markerElement = document.querySelector(`.marker[data-id="${id}"]`);
+            const markerItem = document.querySelector(`.marker-item[data-id="${id}"]`);
             
             if (markerElement) markerElement.classList.add('selected');
             if (markerItem) markerItem.classList.add('selected');
             
-            selectedMarkerId = markerId;
-            deleteMarker.style.display = 'inline-block';
+            this.state.selectedMarkerId = id;
+            document.getElementById('deleteMarker').style.display = 'inline-block';
         }
 
-        function showMarkerInfo(marker) {
-            popupTitle.textContent = marker.title;
-            popupDescription.textContent = marker.description;
+        showMarkerPopup(marker) {
+            const popup = document.getElementById('markerPopup');
+            const title = document.getElementById('popupTitle');
+            const description = document.getElementById('popupDescription');
+            const link = document.getElementById('popupLink');
+            const media = document.getElementById('popupMedia');
             
-            // Clear previous media
-            popupMedia.innerHTML = '';
-            popupLink.style.display = 'none';
+            title.textContent = marker.title;
+            description.textContent = marker.description;
             
-            // Show appropriate content
-            if (marker.type === 'link' && marker.link) {
-                popupLink.href = marker.link;
-                popupLink.textContent = marker.link.length > 50 ? marker.link.substring(0, 50) + '...' : marker.link;
-                popupLink.style.display = 'block';
+            // Clear previous content
+            link.style.display = 'none';
+            media.innerHTML = '';
+            
+            // Show appropriate content based on marker type
+            switch(marker.type) {
+                case 'link':
+                    if (marker.link) {
+                        link.href = marker.link;
+                        link.textContent = marker.link.length > 50 ? 
+                            marker.link.substring(0, 50) + '...' : marker.link;
+                        link.style.display = 'block';
+                    }
+                    break;
+                case 'video':
+                    if (marker.video) {
+                        const videoElement = this.createMediaElement(marker.video, 'video');
+                        if (videoElement) media.appendChild(videoElement);
+                    }
+                    break;
+                case 'audio':
+                    if (marker.audio) {
+                        const audioElement = this.createMediaElement(marker.audio, 'audio');
+                        if (audioElement) media.appendChild(audioElement);
+                    }
+                    break;
             }
-            else if (marker.type === 'video' && marker.video) {
-                const videoElement = createMediaElement(marker.video, 'video');
-                if (videoElement) {
-                    popupMedia.appendChild(videoElement);
-                }
-            }
-            else if (marker.type === 'audio' && marker.audio) {
-                const audioElement = createMediaElement(marker.audio, 'audio');
-                if (audioElement) {
-                    popupMedia.appendChild(audioElement);
-                }
-            }
-
-            // Position popup intelligently
-            positionPopup(marker.displayX, marker.displayY);
+            
+            // Position popup
+            this.positionPopup(popup, marker);
+            popup.style.display = 'block';
         }
 
-        function positionPopup(x, y) {
-            const popupWidth = markerPopup.offsetWidth || 300;
-            const popupHeight = markerPopup.offsetHeight || 200;
-            const containerRect = imageContainer.getBoundingClientRect();
+        positionPopup(popup, marker) {
+            const container = document.getElementById('imageContainer');
+            const containerRect = container.getBoundingClientRect();
             
-            // Try position to the right first
-            let left = x + 40;
-            let top = y - 20;
+            // Find the selected marker element
+            const markerElement = document.querySelector(`.marker[data-id="${marker.id}"]`);
+            if (!markerElement) return;
+            
+            const markerRect = markerElement.getBoundingClientRect();
+            
+            // Calculate marker center relative to container
+            const markerX = markerRect.left + markerRect.width / 2 - containerRect.left;
+            const markerY = markerRect.top + markerRect.height / 2 - containerRect.top;
+            
+            const popupWidth = popup.offsetWidth || 300;
+            const popupHeight = popup.offsetHeight || 200;
+            
+            // Try to position to the right of the marker
+            let left = markerX + 40;
+            let top = markerY - popupHeight / 2;
             
             // Adjust if goes outside container
             if (left + popupWidth > containerRect.width - 20) {
-                left = x - popupWidth - 20;
+                left = markerX - popupWidth - 40;
             }
-            if (left < 20) {
-                left = 20;
-            }
+            if (left < 20) left = 20;
             
             if (top + popupHeight > containerRect.height - 20) {
                 top = containerRect.height - popupHeight - 20;
             }
-            if (top < 20) {
-                top = 20;
-            }
+            if (top < 20) top = 20;
             
-            markerPopup.style.left = left + 'px';
-            markerPopup.style.top = top + 'px';
-            markerPopup.style.display = 'block';
+            popup.style.left = `${left}px`;
+            popup.style.top = `${top}px`;
         }
 
-        function createMediaElement(url, type) {
+        createMediaElement(url, type) {
             if (!url) return null;
             
             if (type === 'video') {
-                if (url.includes('youtube.com') || url.includes('youtu.be') || url.includes('vimeo.com')) {
-                    const embedUrl = getEmbedUrl(url);
-                    const videoContainer = document.createElement('div');
-                    videoContainer.className = 'video-container';
-                    
-                    const iframe = document.createElement('iframe');
-                    iframe.src = embedUrl;
-                    iframe.allowFullscreen = true;
-                    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-                    
-                    videoContainer.appendChild(iframe);
-                    return videoContainer;
-                } else {
-                    const videoContainer = document.createElement('div');
-                    videoContainer.className = 'video-container';
-                    
-                    const video = document.createElement('video');
-                    video.src = url;
-                    video.controls = true;
-                    video.className = 'popup-video';
-                    
-                    videoContainer.appendChild(video);
-                    return videoContainer;
+                if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                    const videoId = this.extractYouTubeId(url);
+                    if (videoId) {
+                        const container = document.createElement('div');
+                        container.className = 'video-container';
+                        
+                        const iframe = document.createElement('iframe');
+                        iframe.src = `https://www.youtube.com/embed/${videoId}`;
+                        iframe.allowFullscreen = true;
+                        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+                        
+                        container.appendChild(iframe);
+                        return container;
+                    }
                 }
+                
+                // Generic video
+                const container = document.createElement('div');
+                container.className = 'video-container';
+                const video = document.createElement('video');
+                video.src = url;
+                video.controls = true;
+                video.className = 'popup-video';
+                container.appendChild(video);
+                return container;
+                
             } else if (type === 'audio') {
                 const audio = document.createElement('audio');
                 audio.src = url;
@@ -1123,130 +990,125 @@
             return null;
         }
 
-        function getEmbedUrl(url) {
-            // YouTube
-            if (url.includes('youtube.com') || url.includes('youtu.be')) {
-                let videoId = '';
-                
-                if (url.includes('youtube.com/watch?v=')) {
-                    const urlObj = new URL(url);
-                    videoId = urlObj.searchParams.get('v');
-                } else if (url.includes('youtu.be/')) {
-                    const urlObj = new URL(url);
-                    videoId = urlObj.pathname.substring(1);
-                } else if (url.includes('youtube.com/embed/')) {
-                    const urlObj = new URL(url);
-                    const pathParts = urlObj.pathname.split('/');
-                    videoId = pathParts[pathParts.length - 1];
-                }
-                
-                if (videoId) {
-                    const cleanVideoId = videoId.split('?')[0].split('&')[0];
-                    return `https://www.youtube.com/embed/${cleanVideoId}?rel=0`;
+        extractYouTubeId(url) {
+            const patterns = [
+                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+                /^([A-Za-z0-9_-]{11})$/
+            ];
+            
+            for (const pattern of patterns) {
+                const match = url.match(pattern);
+                if (match && match[1]) {
+                    return match[1];
                 }
             }
-            // Vimeo
-            else if (url.includes('vimeo.com')) {
-                let videoId = '';
-                
-                if (url.includes('vimeo.com/')) {
-                    const urlObj = new URL(url);
-                    const pathParts = urlObj.pathname.split('/');
-                    videoId = pathParts[pathParts.length - 1];
-                }
-                
-                if (videoId) {
-                    return `https://player.vimeo.com/video/${videoId}`;
-                }
+            return null;
+        }
+
+        updateMarkerList() {
+            const markerList = document.getElementById('markerList');
+            const listCount = document.getElementById('markerListCount');
+            const markerCount = document.getElementById('markerCount');
+            
+            if (this.state.markers.length === 0) {
+                markerList.innerHTML = '<div class="empty-state">No markers added</div>';
+                listCount.textContent = '0';
+                markerCount.textContent = '0';
+                return;
             }
             
-            return url;
-        }
-
-        function hidePopup() {
-            markerPopup.style.display = 'none';
-        }
-
-        function saveMarkerHandler() {
-            if (selectedMarkerId) {
-                // Update existing marker
-                const marker = markers.find(m => m.id === selectedMarkerId);
-                if (marker) {
-                    const errors = validateMarkerData();
-                    if (errors.length > 0) {
-                        alert('Please fix the following errors:\n' + errors.join('\n'));
-                        return;
-                    }
-                    
-                    // Update marker data
-                    marker.title = markerTitle.value;
-                    marker.description = markerDescription.value;
-                    marker.link = markerLink.value;
-                    marker.video = markerVideo.value;
-                    marker.audio = markerAudio.value;
-                    marker.type = currentMarkerType;
-                    
-                    updateMarkerList();
-                    
-                    // Update marker visual
-                    const markerElement = document.querySelector(`.marker[data-id="${selectedMarkerId}"]`);
-                    if (markerElement) {
-                        markerElement.className = 'marker ' + currentMarkerType;
-                        if (markerElement.classList.contains('selected')) {
-                            markerElement.classList.add('selected');
-                        }
-                        markerElement.innerHTML = `<i class="fas fa-${markerThemes[currentMarkerType].icon}"></i>`;
-                    }
-                    
-                    saveToHistory();
-                    
-                    // Update popup if open
-                    if (markerPopup.style.display === 'block') {
-                        showMarkerInfo(marker);
-                    }
-                    
-                    alert('Marker updated!');
-                }
-            } else {
-                alert('Please select a marker to edit, or click on the image to add a new marker.');
-            }
-        }
-
-        function deleteMarkerHandler() {
-            if (selectedMarkerId && confirm('Delete this marker?')) {
-                markers = markers.filter(m => m.id !== selectedMarkerId);
-                const markerElement = document.querySelector(`.marker[data-id="${selectedMarkerId}"]`);
-                if (markerElement) markerElement.remove();
-                updateMarkerList();
-                hidePopup();
-                resetForm();
-                selectedMarkerId = null;
-                saveToHistory();
-            }
-        }
-
-        function clearMarkersHandler() {
-            if (markers.length === 0) return;
+            let html = '';
+            this.state.markers.forEach(marker => {
+                html += `
+                    <div class="marker-item" data-id="${marker.id}">
+                        <div class="marker-item-header">
+                            <div class="marker-item-title">
+                                <i class="fas fa-${this.markerThemes[marker.type].icon}"></i>
+                                ${marker.title}
+                            </div>
+                            <span class="marker-item-type">${marker.type}</span>
+                        </div>
+                        <div class="marker-item-description">${marker.description || 'No description'}</div>
+                        <div class="marker-item-actions">
+                            <button class="marker-action-btn edit" data-id="${marker.id}">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="marker-action-btn delete" data-id="${marker.id}">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
             
-            if (confirm('Clear all markers? This cannot be undone.')) {
-                markers = [];
-                document.querySelectorAll('.marker:not(.preview)').forEach(m => m.remove());
-                updateMarkerList();
-                hidePopup();
-                resetForm();
-                saveToHistory();
+            markerList.innerHTML = html;
+            listCount.textContent = this.state.markers.length;
+            markerCount.textContent = this.state.markers.length;
+        }
+
+        populateFormWithMarker(marker) {
+            document.getElementById('markerTitle').value = marker.title;
+            document.getElementById('markerDescription').value = marker.description || '';
+            document.getElementById('markerLink').value = marker.link || '';
+            document.getElementById('markerVideo').value = marker.video || '';
+            document.getElementById('markerAudio').value = marker.audio || '';
+            
+            // Set marker type
+            document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
+            document.querySelector(`.marker-type[data-type="${marker.type}"]`).classList.add('selected');
+            this.state.currentMarkerType = marker.type;
+            this.updateFieldsVisibility();
+            
+            document.getElementById('deleteMarker').style.display = 'inline-block';
+        }
+
+        updateFieldsVisibility() {
+            document.querySelectorAll('.url-field').forEach(field => field.classList.remove('visible'));
+            
+            switch(this.state.currentMarkerType) {
+                case 'link':
+                    document.getElementById('markerLink').classList.add('visible');
+                    break;
+                case 'video':
+                    document.getElementById('markerVideo').classList.add('visible');
+                    break;
+                case 'audio':
+                    document.getElementById('markerAudio').classList.add('visible');
+                    break;
             }
         }
 
-        function filterMarkers() {
-            const searchTerm = markerSearch.value.toLowerCase();
-            const markerItems = markerList.querySelectorAll('.marker-item');
+        resetForm() {
+            document.getElementById('markerTitle').value = '';
+            document.getElementById('markerDescription').value = '';
+            document.getElementById('markerLink').value = '';
+            document.getElementById('markerVideo').value = '';
+            document.getElementById('markerAudio').value = '';
+            document.getElementById('deleteMarker').style.display = 'none';
+            this.state.selectedMarkerId = null;
             
+            // Reset to default marker type
+            document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
+            document.querySelector('.marker-type[data-type="info"]').classList.add('selected');
+            this.state.currentMarkerType = 'info';
+            this.updateFieldsVisibility();
+            
+            // Deselect all markers
+            document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
+            document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
+            
+            // Hide popup
+            document.getElementById('markerPopup').style.display = 'none';
+        }
+
+        filterMarkers(searchTerm) {
+            const items = document.querySelectorAll('.marker-item');
             let visibleCount = 0;
-            markerItems.forEach(item => {
+            
+            items.forEach(item => {
                 const title = item.querySelector('.marker-item-title').textContent.toLowerCase();
                 const type = item.querySelector('.marker-item-type').textContent.toLowerCase();
-                const description = item.dataset.description ? item.dataset.description.toLowerCase() : '';
+                const description = item.querySelector('.marker-item-description').textContent.toLowerCase();
                 
                 if (title.includes(searchTerm) || type.includes(searchTerm) || description.includes(searchTerm)) {
                     item.style.display = 'flex';
@@ -1256,294 +1118,267 @@
                 }
             });
             
-            if (visibleCount === 0 && markerSearch.value) {
-                markerList.innerHTML = '<div class="empty-state">No markers found</div>';
+            if (visibleCount === 0 && searchTerm) {
+                document.getElementById('markerList').innerHTML = '<div class="empty-state">No markers found</div>';
             }
         }
+    }
 
-        function updateMarkerList() {
-            if (markers.length === 0) {
-                markerList.innerHTML = '<div class="empty-state">No markers added</div>';
-                document.getElementById('markerListCount').textContent = '0';
-                document.getElementById('markerCount').textContent = '0';
-                return;
-            }
-
-            let html = '';
-            markers.forEach(marker => {
-                html += `<div class="marker-item" data-id="${marker.id}" data-description="${marker.description.toLowerCase()}">
-                    <div class="marker-item-header">
-                        <div class="marker-item-title">
-                            <i class="fas fa-${markerThemes[marker.type].icon}"></i>
-                            ${marker.title}
-                        </div>
-                        <span class="marker-item-type">${marker.type}</span>
-                    </div>
-                    <div class="marker-item-description">${marker.description || 'No description'}</div>
-                    <div class="marker-item-actions">
-                        <button class="marker-action-btn edit" data-id="${marker.id}">
-                            <i class="fas fa-edit"></i> Edit
-                        </button>
-                        <button class="marker-action-btn delete" data-id="${marker.id}">
-                            <i class="fas fa-trash"></i> Delete
-                        </button>
-                    </div>
-                </div>`;
-            });
-
-            markerList.innerHTML = html;
-            document.getElementById('markerListCount').textContent = markers.length;
-            document.getElementById('markerCount').textContent = markers.length;
-
-            // Add event listeners
-            markerList.querySelectorAll('.marker-item').forEach(item => {
-                const markerId = parseInt(item.dataset.id);
-                const marker = markers.find(m => m.id === markerId);
-                
-                item.addEventListener('click', (e) => {
-                    if (!e.target.closest('.marker-item-actions')) {
-                        selectMarker(markerId);
-                        showMarkerInfo(marker);
-                    }
-                });
-                
-                item.querySelector('.edit').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    selectMarker(markerId);
-                    populateFormWithMarker(marker);
-                });
-                
-                item.querySelector('.delete').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    markers = markers.filter(m => m.id !== markerId);
-                    const markerElement = document.querySelector(`.marker[data-id="${markerId}"]`);
-                    if (markerElement) markerElement.remove();
-                    updateMarkerList();
-                    if (selectedMarkerId === markerId) {
-                        hidePopup();
-                        resetForm();
-                        selectedMarkerId = null;
-                    }
-                    saveToHistory();
-                });
-            });
+    // ====================== IMAGE MANAGER ======================
+    class ImageManager {
+        constructor(state, markerManager) {
+            this.state = state;
+            this.markerManager = markerManager;
+            this.isMouseOverImage = false;
         }
 
-        function updateFieldsVisibility() {
-            // Hide all URL fields
-            markerLink.classList.remove('visible');
-            markerVideo.classList.remove('visible');
-            markerAudio.classList.remove('visible');
-            
-            // Show only the relevant field
-            switch(currentMarkerType) {
-                case 'link':
-                    markerLink.classList.add('visible');
-                    break;
-                case 'video':
-                    markerVideo.classList.add('visible');
-                    break;
-                case 'audio':
-                    markerAudio.classList.add('visible');
-                    break;
-            }
-        }
-
-        function resetForm() {
-            markerTitle.value = '';
-            markerDescription.value = '';
-            markerLink.value = '';
-            markerVideo.value = '';
-            markerAudio.value = '';
-            deleteMarker.style.display = 'none';
-            selectedMarkerId = null;
-            
-            // Deselect all markers
-            document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
-            document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
-            
-            // Reset to info type
-            markerTypes.forEach(t => t.classList.remove('selected'));
-            document.querySelector('.marker-type[data-type="info"]').classList.add('selected');
-            currentMarkerType = 'info';
-            updateFieldsVisibility();
-            
-            hidePopup();
-        }
-
-        // History management
-        function saveToHistory() {
-            history = history.slice(0, historyIndex + 1);
-            history.push({
-                markers: JSON.parse(JSON.stringify(markers)),
-                image: currentImage
-            });
-            historyIndex++;
-            updateHistoryButtons();
-        }
-
-        function undo() {
-            if (historyIndex > 0) {
-                historyIndex--;
-                const state = history[historyIndex];
-                markers = state.markers;
-                renderAllMarkers();
-                updateMarkerList();
-                updateHistoryButtons();
-            }
-        }
-
-        function redo() {
-            if (historyIndex < history.length - 1) {
-                historyIndex++;
-                const state = history[historyIndex];
-                markers = state.markers;
-                renderAllMarkers();
-                updateMarkerList();
-                updateHistoryButtons();
-            }
-        }
-
-        function updateHistoryButtons() {
-            undoBtn.disabled = historyIndex <= 0;
-            redoBtn.disabled = historyIndex >= history.length - 1;
-        }
-
-        // Keyboard shortcuts
-        function handleKeyboardShortcuts(e) {
-            if (e.ctrlKey || e.metaKey) {
-                switch(e.key) {
-                    case 's':
-                        e.preventDefault();
-                        saveProjectHandler();
-                        break;
-                    case 'o':
-                        e.preventDefault();
-                        loadProjectHandler();
-                        break;
-                    case 'e':
-                        e.preventDefault();
-                        exportHTMLHandler();
-                        break;
-                    case 'z':
-                        e.preventDefault();
-                        undo();
-                        break;
-                    case 'y':
-                        e.preventDefault();
-                        redo();
-                        break;
+        async loadImage(file) {
+            return new Promise((resolve, reject) => {
+                if (!file.type.startsWith('image/')) {
+                    reject('Please upload a valid image file');
+                    return;
                 }
-            }
-            
-            if (e.key === 'Delete' && selectedMarkerId) {
-                deleteMarkerHandler();
-            }
-            
-            if (e.key === 'Escape') {
-                hidePopup();
-                resetForm();
-            }
+                
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        this.state.currentImage = {
+                            src: e.target.result,
+                            width: img.width,
+                            height: img.height,
+                            name: file.name
+                        };
+                        
+                        document.getElementById('imageDisplay').src = e.target.result;
+                        document.getElementById('imageDisplay').style.display = 'block';
+                        document.getElementById('emptyState').style.display = 'none';
+                        document.getElementById('currentImageName').textContent = file.name;
+                        document.getElementById('imageInfo').classList.remove('hidden');
+                        
+                        // Clear existing markers
+                        this.state.markers = [];
+                        this.state.saveToHistory();
+                        this.markerManager.updateMarkerList();
+                        
+                        // Re-render after image loads
+                        setTimeout(() => {
+                            this.markerManager.renderAllMarkers();
+                        }, 100);
+                        
+                        resolve();
+                    };
+                    img.onerror = () => reject('Error loading image');
+                    img.src = e.target.result;
+                };
+                reader.onerror = () => reject('Error reading file');
+                reader.readAsDataURL(file);
+            });
         }
 
-        function saveProjectHandler() {
-            if (!currentImage) {
-                alert('Please upload an image first');
+        setupImageEvents() {
+            const imageContainer = document.getElementById('imageContainer');
+            
+            imageContainer.addEventListener('click', (e) => this.handleImageClick(e));
+            imageContainer.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+            imageContainer.addEventListener('mouseenter', () => this.isMouseOverImage = true);
+            imageContainer.addEventListener('mouseleave', () => {
+                this.isMouseOverImage = false;
+                this.removePreviewMarker();
+            });
+            
+            // Handle window resize
+            let resizeTimer;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    if (this.state.currentImage) {
+                        this.markerManager.renderAllMarkers();
+                    }
+                }, 250);
+            });
+        }
+
+        handleImageClick(e) {
+            if (!this.state.currentImage) {
+                alert('Please upload an image first!');
                 return;
             }
-
-            const projectName = prompt('Project name:', currentImage.name.replace(/\.[^/.]+$/, "") || 'Project');
-            if (!projectName) return;
-
-            const project = {
-                name: projectName,
-                image: currentImage,
-                markers: markers,
-                date: new Date().toISOString()
+            
+            // Don't add marker if clicking on existing marker or popup
+            if (e.target.classList.contains('marker') || 
+                e.target.closest('.marker') ||
+                e.target.closest('.marker-popup')) {
+                return;
+            }
+            
+            this.removePreviewMarker();
+            
+            const container = document.getElementById('imageContainer');
+            const img = document.getElementById('imageDisplay');
+            
+            const containerRect = container.getBoundingClientRect();
+            const imgRect = img.getBoundingClientRect();
+            
+            // Calculate click position relative to CONTAINER
+            const clickX = e.clientX - containerRect.left;
+            const clickY = e.clientY - containerRect.top;
+            
+            // Calculate where the image starts within the container
+            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+            
+            // Adjust click position to be relative to image within container
+            const imageRelativeX = clickX - imageOffsetX;
+            const imageRelativeY = clickY - imageOffsetY;
+            
+            // Check if click is within image bounds
+            if (imageRelativeX < 0 || imageRelativeX > imgRect.width || 
+                imageRelativeY < 0 || imageRelativeY > imgRect.height) {
+                return;
+            }
+            
+            // Convert to percentage coordinates relative to image
+            const percentX = (imageRelativeX / imgRect.width) * 100;
+            const percentY = (imageRelativeY / imgRect.height) * 100;
+            
+            // Create new marker
+            const marker = {
+                id: Date.now() + Math.random(),
+                type: this.state.currentMarkerType,
+                x: percentX,
+                y: percentY,
+                title: `New ${this.state.currentMarkerType.charAt(0).toUpperCase() + this.state.currentMarkerType.slice(1)} Marker`,
+                description: '',
+                link: '',
+                video: '',
+                audio: ''
             };
-
-            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
-            projects.push(project);
-            localStorage.setItem('projects', JSON.stringify(projects));
-            alert(`Project "${projectName}" saved!`);
+            
+            this.state.addMarker(marker);
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            this.markerManager.selectMarker(marker.id);
+            this.markerManager.populateFormWithMarker(marker);
+            this.markerManager.showMarkerPopup(marker);
         }
 
-        function loadProjectHandler() {
-            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
-            if (projects.length === 0) {
-                alert('No saved projects found');
-                return;
-            }
-
-            const projectNames = projects.map((p, i) => `${i + 1}. ${p.name} (${new Date(p.date).toLocaleDateString()})`).join('\n');
-            const selection = prompt(`Available projects:\n\n${projectNames}\n\nEnter project number or name:`);
+        handleMouseMove(e) {
+            if (!this.state.currentImage || !this.isMouseOverImage) return;
             
-            let project;
-            if (selection) {
-                // Try to parse as number
-                const index = parseInt(selection) - 1;
-                if (!isNaN(index) && index >= 0 && index < projects.length) {
-                    project = projects[index];
-                } else {
-                    // Try to find by name
-                    project = projects.find(p => p.name.toLowerCase().includes(selection.toLowerCase()));
-                }
-            }
+            this.removePreviewMarker();
             
-            if (project) {
-                currentImage = project.image;
-                markers = project.markers || [];
+            const container = document.getElementById('imageContainer');
+            const img = document.getElementById('imageDisplay');
+            
+            const containerRect = container.getBoundingClientRect();
+            const imgRect = img.getBoundingClientRect();
+            
+            // Calculate mouse position relative to CONTAINER
+            const mouseX = e.clientX - containerRect.left;
+            const mouseY = e.clientY - containerRect.top;
+            
+            // Calculate where the image starts within the container
+            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+            
+            // Adjust mouse position to be relative to image within container
+            const imageRelativeX = mouseX - imageOffsetX;
+            const imageRelativeY = mouseY - imageOffsetY;
+            
+            // Only show preview if mouse is over the image
+            if (imageRelativeX >= 0 && imageRelativeX <= imgRect.width && 
+                imageRelativeY >= 0 && imageRelativeY <= imgRect.height) {
                 
-                imageDisplay.src = currentImage.src;
-                imageDisplay.style.display = 'block';
-                emptyState.style.display = 'none';
+                // Calculate percentage position for preview
+                const percentX = (imageRelativeX / imgRect.width) * 100;
+                const percentY = (imageRelativeY / imgRect.height) * 100;
                 
-                document.getElementById('currentImageName').textContent = project.name;
-                document.getElementById('imageInfo').classList.remove('hidden');
-                
-                setTimeout(() => {
-                    renderAllMarkers();
-                    updateMarkerList();
-                    resetForm();
-                    saveToHistory();
-                    alert(`Project "${project.name}" loaded!`);
-                }, 100);
-            } else {
-                alert('Project not found');
+                this.showPreviewMarker(percentX, percentY);
             }
         }
 
-        function exportHTMLHandler() {
-            if (!currentImage || markers.length === 0) {
-                alert('Please create a project with markers first');
-                return;
-            }
-
-            const projectName = prompt('Project name for export:', currentImage.name.replace(/\.[^/.]+$/, "") || 'Interactive Image');
-            if (!projectName) return;
-
-            const responsive = confirm('Enable responsive design for mobile devices?');
-            const smartPositioning = confirm('Use smart popup positioning (avoid off-screen popups)?');
+        showPreviewMarker(percentX, percentY) {
+            const container = document.getElementById('imageContainer');
+            const img = document.getElementById('imageDisplay');
+            const containerRect = container.getBoundingClientRect();
+            const imgRect = img.getBoundingClientRect();
             
-            const html = createExportHTML(projectName, { responsive, smartPositioning });
-            document.getElementById('exportCode').value = html;
-            document.getElementById('exportModal').classList.remove('hidden');
+            // Calculate where the image starts within the container
+            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+            
+            // Calculate marker position in pixels relative to container
+            const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
+            const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
+            
+            this.state.previewMarker = document.createElement('div');
+            this.state.previewMarker.className = `marker preview ${this.state.currentMarkerType}`;
+            this.state.previewMarker.style.left = `${markerX}px`;
+            this.state.previewMarker.style.top = `${markerY}px`;
+            this.state.previewMarker.innerHTML = 
+                `<i class="fas fa-${this.markerManager.markerThemes[this.state.currentMarkerType].icon}"></i>`;
+            
+            document.getElementById('imageContainer').appendChild(this.state.previewMarker);
         }
 
-        function createExportHTML(projectName, options = {}) {
+        removePreviewMarker() {
+            if (this.state.previewMarker) {
+                this.state.previewMarker.remove();
+                this.state.previewMarker = null;
+            }
+        }
+    }
+
+    // ====================== EXPORT MANAGER ======================
+    class ExportManager {
+        constructor(state, markerManager) {
+            this.state = state;
+            this.markerManager = markerManager;
+        }
+
+        generateExportHTML(projectName, options = {}) {
             const { responsive = true, smartPositioning = true } = options;
+            
+            const markersData = JSON.stringify(this.state.markers.map(marker => ({
+                id: marker.id,
+                type: marker.type,
+                x: marker.x,
+                y: marker.y,
+                title: marker.title,
+                description: marker.description,
+                link: marker.link,
+                video: marker.video,
+                audio: marker.audio
+            })));
             
             return `<!DOCTYPE html>
 <html>
 <head>
     <title>${projectName}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 20px; text-align: center; font-family: Arial, sans-serif; background: #f0f2f5; }
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; background: #f0f2f5; }
         .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .image-container { position: relative; display: inline-block; max-width: 100%; margin: 20px 0; }
-        img { max-width: 100%; height: auto; border-radius: 5px; }
-        .marker { position: absolute; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: transform 0.2s; }
+        img { max-width: 100%; height: auto; border-radius: 5px; display: block; }
+        .marker { 
+            position: absolute; 
+            width: 32px; 
+            height: 32px; 
+            border-radius: 50%; 
+            cursor: pointer; 
+            transform: translate(-50%, -50%); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            color: white; 
+            font-size: 14px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); 
+            transition: transform 0.2s; 
+            border: 2px solid white;
+        }
         .marker:hover { transform: translate(-50%, -50%) scale(1.2); }
         .marker.info { background: #4cc9f0; }
         .marker.link { background: #4361ee; }
@@ -1551,14 +1386,26 @@
         .marker.audio { background: #7209b7; }
         .marker.warning { background: #f8961e; }
         .marker.question { background: #2a9d8f; }
-        .popup { position: absolute; background: white; border: 1px solid #ccc; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); display: none; z-index: 100; max-width: 350px; min-width: 250px; border-radius: 8px; }
+        .popup { 
+            position: absolute; 
+            background: white; 
+            border: 1px solid #ccc; 
+            padding: 20px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15); 
+            display: none; 
+            z-index: 100; 
+            max-width: 350px; 
+            min-width: 250px; 
+            border-radius: 8px; 
+            border-left: 4px solid #00b4d8;
+        }
         .popup-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .popup-title { color: #4a6fa5; margin: 0; flex: 1; }
-        .popup-close { background: none; border: none; font-size: 18px; cursor: pointer; color: #6c757d; }
+        .popup-title { color: #4a6fa5; margin: 0; flex: 1; font-size: 16px; }
+        .popup-close { background: none; border: none; font-size: 18px; cursor: pointer; color: #6c757d; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
         .popup-content { margin-bottom: 15px; }
         .popup-description { color: #495057; line-height: 1.4; margin-bottom: 10px; }
-        .popup-link { display: block; color: #4a6fa5; text-decoration: none; margin-bottom: 10px; word-break: break-all; }
-        .popup-link:hover { text-decoration: underline; }
+        .popup-link { display: block; color: #4a6fa5; text-decoration: none; margin-bottom: 10px; word-break: break-all; padding: 6px 12px; background: rgba(76, 201, 240, 0.1); border-radius: 4px; }
+        .popup-link:hover { background: rgba(76, 201, 240, 0.2); }
         .popup-media { width: 100%; margin-top: 10px; }
         .video-container { position: relative; width: 100%; height: 0; padding-bottom: 56.25%; margin-top: 10px; }
         .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 4px; }
@@ -1566,7 +1413,7 @@
         ${responsive ? `
         @media (max-width: 768px) {
             .container { padding: 10px; }
-            .popup { max-width: 90vw; left: 5vw !important; }
+            .popup { max-width: 90vw; }
             .marker { width: 24px; height: 24px; font-size: 12px; }
         }` : ''}
     </style>
@@ -1575,8 +1422,8 @@
     <div class="container">
         <h1>${projectName}</h1>
         <div class="image-container">
-            <img src="${currentImage.src}" alt="${projectName}" id="exportedImage">
-            <div id="markers"></div>
+            <img src="${this.state.currentImage.src}" alt="${projectName}" id="exportedImage">
+            <div id="markersContainer"></div>
             <div class="popup" id="popup">
                 <div class="popup-header">
                     <h4 class="popup-title" id="popupTitle"></h4>
@@ -1594,36 +1441,51 @@
     </div>
 
     <script>
-        const markers = ${JSON.stringify(markers)};
+        const markers = ${markersData};
         const image = document.getElementById('exportedImage');
-        const smartPositioning = ${smartPositioning};
+        const markersContainer = document.getElementById('markersContainer');
+        const popup = document.getElementById('popup');
+        const popupTitle = document.getElementById('popupTitle');
+        const popupDesc = document.getElementById('popupDesc');
+        const popupLink = document.getElementById('popupLink');
+        const popupMedia = document.getElementById('popupMedia');
+        
+        const markerIcons = {
+            info: 'info-circle',
+            link: 'link',
+            video: 'video',
+            audio: 'volume-up',
+            warning: 'exclamation-triangle',
+            question: 'question-circle'
+        };
         
         function createMediaElement(url, type) {
+            if (!url) return null;
+            
             if (type === 'video') {
-                if (url.includes('youtube.com') || url.includes('youtu.be') || url.includes('vimeo.com')) {
-                    const embedUrl = getEmbedUrl(url);
-                    const videoContainer = document.createElement('div');
-                    videoContainer.className = 'video-container';
-                    
-                    const iframe = document.createElement('iframe');
-                    iframe.src = embedUrl;
-                    iframe.allowFullscreen = true;
-                    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-                    
-                    videoContainer.appendChild(iframe);
-                    return videoContainer;
-                } else {
-                    const videoContainer = document.createElement('div');
-                    videoContainer.className = 'video-container';
-                    
-                    const video = document.createElement('video');
-                    video.src = url;
-                    video.controls = true;
-                    video.className = 'popup-video';
-                    
-                    videoContainer.appendChild(video);
-                    return videoContainer;
+                if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                    const videoId = extractYouTubeId(url);
+                    if (videoId) {
+                        const container = document.createElement('div');
+                        container.className = 'video-container';
+                        const iframe = document.createElement('iframe');
+                        iframe.src = 'https://www.youtube.com/embed/' + videoId;
+                        iframe.allowFullscreen = true;
+                        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+                        container.appendChild(iframe);
+                        return container;
+                    }
                 }
+                
+                const container = document.createElement('div');
+                container.className = 'video-container';
+                const video = document.createElement('video');
+                video.src = url;
+                video.controls = true;
+                video.className = 'popup-video';
+                container.appendChild(video);
+                return container;
+                
             } else if (type === 'audio') {
                 const audio = document.createElement('audio');
                 audio.src = url;
@@ -1631,177 +1493,517 @@
                 audio.className = 'popup-audio';
                 return audio;
             }
+            
+            return null;
         }
         
-        function getEmbedUrl(url) {
-            if (url.includes('youtube.com') || url.includes('youtu.be')) {
-                let videoId = '';
-                
-                if (url.includes('youtube.com/watch?v=')) {
-                    const urlObj = new URL(url);
-                    videoId = urlObj.searchParams.get('v');
-                } else if (url.includes('youtu.be/')) {
-                    const urlObj = new URL(url);
-                    videoId = urlObj.pathname.substring(1);
-                } else if (url.includes('youtube.com/embed/')) {
-                    const urlObj = new URL(url);
-                    const pathParts = urlObj.pathname.split('/');
-                    videoId = pathParts[pathParts.length - 1];
-                }
-                
-                if (videoId) {
-                    const cleanVideoId = videoId.split('?')[0].split('&')[0];
-                    return 'https://www.youtube.com/embed/' + cleanVideoId + '?rel=0';
-                }
+        function extractYouTubeId(url) {
+            const patterns = [
+                /(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/|youtube\\.com\\/embed\\/)([^&\\n?#]+)/,
+                /^([A-Za-z0-9_-]{11})$/
+            ];
+            
+            for (const pattern of patterns) {
+                const match = url.match(pattern);
+                if (match && match[1]) return match[1];
             }
-            else if (url.includes('vimeo.com')) {
-                let videoId = '';
-                
-                if (url.includes('vimeo.com/')) {
-                    const urlObj = new URL(url);
-                    const pathParts = urlObj.pathname.split('/');
-                    videoId = pathParts[pathParts.length - 1];
-                }
-                
-                if (videoId) {
-                    return 'https://player.vimeo.com/video/' + videoId;
-                }
-            }
-            return url;
+            return null;
         }
         
-        function positionPopup(popup, x, y) {
-            if (smartPositioning) {
-                const popupWidth = popup.offsetWidth;
-                const popupHeight = popup.offsetHeight;
-                const container = document.querySelector('.image-container');
-                const containerRect = container.getBoundingClientRect();
-                
-                let left = x + 40;
-                let top = y - 20;
-                
-                if (left + popupWidth > containerRect.width) {
-                    left = x - popupWidth - 20;
-                }
-                if (top + popupHeight > containerRect.height) {
-                    top = y - popupHeight + 20;
-                }
-                
-                popup.style.left = left + 'px';
-                popup.style.top = top + 'px';
-            } else {
-                popup.style.left = (x + 40) + 'px';
-                popup.style.top = (y - 20) + 'px';
+        function positionPopup(x, y) {
+            const popupWidth = popup.offsetWidth;
+            const popupHeight = popup.offsetHeight;
+            const container = document.querySelector('.image-container');
+            const containerRect = container.getBoundingClientRect();
+            
+            let left = x + 40;
+            let top = y - popupHeight / 2;
+            
+            ${smartPositioning ? `
+            if (left + popupWidth > containerRect.width) {
+                left = x - popupWidth - 40;
             }
+            if (left < 20) left = 20;
+            
+            if (top + popupHeight > containerRect.height) {
+                top = containerRect.height - popupHeight - 20;
+            }
+            if (top < 20) top = 20;
+            ` : ''}
+            
+            popup.style.left = left + 'px';
+            popup.style.top = top + 'px';
         }
         
-        image.onload = function() {
+        function renderMarkers() {
+            markersContainer.innerHTML = '';
             const imgRect = image.getBoundingClientRect();
+            const containerRect = image.parentElement.getBoundingClientRect();
+            
             markers.forEach(marker => {
                 const m = document.createElement('div');
                 m.className = 'marker ' + marker.type;
                 
+                // Convert percentage to pixels
                 const x = (marker.x / 100) * imgRect.width;
                 const y = (marker.y / 100) * imgRect.height;
                 
                 m.style.left = x + 'px';
                 m.style.top = y + 'px';
+                m.innerHTML = '<i class="fas fa-' + markerIcons[marker.type] + '"></i>';
                 
-                let icon = '';
-                if (marker.type === 'info') icon = '<i class="fas fa-info-circle"></i>';
-                else if (marker.type === 'link') icon = '<i class="fas fa-link"></i>';
-                else if (marker.type === 'video') icon = '<i class="fas fa-video"></i>';
-                else if (marker.type === 'audio') icon = '<i class="fas fa-volume-up"></i>';
-                else if (marker.type === 'warning') icon = '<i class="fas fa-exclamation-triangle"></i>';
-                else if (marker.type === 'question') icon = '<i class="fas fa-question-circle"></i>';
-                m.innerHTML = icon;
-                
-                m.onclick = function(e) {
+                m.addEventListener('click', function(e) {
                     e.stopPropagation();
-                    document.getElementById('popupTitle').textContent = marker.title;
-                    document.getElementById('popupDesc').textContent = marker.description;
                     
-                    const link = document.getElementById('popupLink');
-                    const media = document.getElementById('popupMedia');
-                    media.innerHTML = '';
-                    link.style.display = 'none';
+                    popupTitle.textContent = marker.title;
+                    popupDesc.textContent = marker.description;
+                    popupLink.style.display = 'none';
+                    popupMedia.innerHTML = '';
                     
                     if (marker.type === 'link' && marker.link) {
-                        link.href = marker.link;
-                        link.textContent = marker.link;
-                        link.style.display = 'block';
+                        popupLink.href = marker.link;
+                        popupLink.textContent = marker.link.length > 50 ? 
+                            marker.link.substring(0, 50) + '...' : marker.link;
+                        popupLink.style.display = 'block';
                     } else if (marker.type === 'video' && marker.video) {
                         const videoElement = createMediaElement(marker.video, 'video');
-                        media.appendChild(videoElement);
+                        if (videoElement) popupMedia.appendChild(videoElement);
                     } else if (marker.type === 'audio' && marker.audio) {
                         const audioElement = createMediaElement(marker.audio, 'audio');
-                        media.appendChild(audioElement);
+                        if (audioElement) popupMedia.appendChild(audioElement);
                     }
                     
-                    positionPopup(document.getElementById('popup'), x, y);
-                    document.getElementById('popup').style.display = 'block';
-                };
-                document.getElementById('markers').appendChild(m);
+                    positionPopup(x, y);
+                    popup.style.display = 'block';
+                });
+                
+                markersContainer.appendChild(m);
             });
-        };
+        }
+        
+        image.onload = renderMarkers;
         
         document.addEventListener('click', function(e) {
             if (!e.target.closest('.marker') && !e.target.closest('.popup')) {
-                document.getElementById('popup').style.display = 'none';
+                popup.style.display = 'none';
             }
         });
         
         window.addEventListener('resize', function() {
-            document.getElementById('markers').innerHTML = '';
             if (image.complete) {
-                image.onload();
+                renderMarkers();
             }
         });
+        
+        if (image.complete) {
+            renderMarkers();
+        }
     <\/script>
 </body>
 </html>`;
         }
+    }
 
-        function copyExportCode() {
-            const exportCode = document.getElementById('exportCode');
-            exportCode.select();
-            exportCode.setSelectionRange(0, 99999);
-            try {
-                document.execCommand('copy');
-                alert('Code copied to clipboard! Save it as an HTML file.');
-            } catch (err) {
-                console.error('Failed to copy: ', err);
-                alert('Failed to copy code. Please select and copy manually.');
+    // ====================== MAIN APPLICATION ======================
+    class Application {
+        constructor() {
+            this.state = new AppState();
+            this.markerManager = new MarkerManager(this.state);
+            this.imageManager = new ImageManager(this.state, this.markerManager);
+            this.exportManager = new ExportManager(this.state, this.markerManager);
+            
+            this.initialize();
+        }
+
+        initialize() {
+            this.setupEventListeners();
+            this.setupKeyboardShortcuts();
+            this.state.saveToHistory(); // Initial state
+        }
+
+        setupEventListeners() {
+            // File upload
+            document.getElementById('uploadArea').addEventListener('click', () => {
+                document.getElementById('imageUpload').click();
+            });
+
+            document.getElementById('imageUpload').addEventListener('change', async (e) => {
+                if (e.target.files[0]) {
+                    try {
+                        const originalHTML = document.getElementById('uploadArea').innerHTML;
+                        document.getElementById('uploadArea').innerHTML = 
+                            '<i class="fas fa-spinner fa-spin"></i><p>Loading image...</p>';
+                        
+                        await this.imageManager.loadImage(e.target.files[0]);
+                        document.getElementById('uploadArea').innerHTML = originalHTML;
+                    } catch (error) {
+                        alert(error);
+                        document.getElementById('uploadArea').innerHTML = originalHTML;
+                    }
+                }
+            });
+
+            // Drag and drop
+            const uploadArea = document.getElementById('uploadArea');
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                if (e.dataTransfer.files[0]) {
+                    try {
+                        await this.imageManager.loadImage(e.dataTransfer.files[0]);
+                    } catch (error) {
+                        alert(error);
+                    }
+                }
+            });
+
+            // Marker type selection
+            document.querySelectorAll('.marker-type').forEach(type => {
+                type.addEventListener('click', () => {
+                    document.querySelectorAll('.marker-type').forEach(t => t.classList.remove('selected'));
+                    type.classList.add('selected');
+                    this.state.currentMarkerType = type.dataset.type;
+                    this.markerManager.updateFieldsVisibility();
+                });
+            });
+
+            // Form buttons
+            document.getElementById('saveMarker').addEventListener('click', () => this.saveMarker());
+            document.getElementById('deleteMarker').addEventListener('click', () => this.deleteMarker());
+            document.getElementById('clearForm').addEventListener('click', () => this.markerManager.resetForm());
+            document.getElementById('clearMarkers').addEventListener('click', () => this.clearAllMarkers());
+            document.getElementById('closePopup').addEventListener('click', () => {
+                document.getElementById('markerPopup').style.display = 'none';
+            });
+
+            // Search
+            document.getElementById('markerSearch').addEventListener('input', (e) => {
+                this.markerManager.filterMarkers(e.target.value.toLowerCase());
+            });
+
+            // History controls
+            document.getElementById('undoBtn').addEventListener('click', () => {
+                if (this.state.undo()) {
+                    this.markerManager.renderAllMarkers();
+                    this.markerManager.updateMarkerList();
+                    this.markerManager.resetForm();
+                }
+            });
+
+            document.getElementById('redoBtn').addEventListener('click', () => {
+                if (this.state.redo()) {
+                    this.markerManager.renderAllMarkers();
+                    this.markerManager.updateMarkerList();
+                    this.markerManager.resetForm();
+                }
+            });
+
+            // Project controls
+            document.getElementById('saveProjectBtn').addEventListener('click', () => this.saveProject());
+            document.getElementById('loadProjectBtn').addEventListener('click', () => this.loadProject());
+            document.getElementById('exportBtn').addEventListener('click', () => this.exportProject());
+
+            // Export modal
+            document.getElementById('copyCodeBtn').addEventListener('click', () => this.copyExportCode());
+            document.getElementById('downloadBtn').addEventListener('click', () => this.downloadExportFile());
+            document.getElementById('closeExportBtn').addEventListener('click', () => {
+                document.getElementById('exportModal').classList.add('hidden');
+            });
+
+            // Setup image events
+            this.imageManager.setupImageEvents();
+        }
+
+        setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    switch(e.key.toLowerCase()) {
+                        case 's':
+                            e.preventDefault();
+                            this.saveProject();
+                            break;
+                        case 'o':
+                            e.preventDefault();
+                            this.loadProject();
+                            break;
+                        case 'e':
+                            e.preventDefault();
+                            this.exportProject();
+                            break;
+                        case 'z':
+                            e.preventDefault();
+                            this.undo();
+                            break;
+                        case 'y':
+                            e.preventDefault();
+                            this.redo();
+                            break;
+                    }
+                }
+                
+                if (e.key === 'Delete' && this.state.selectedMarkerId) {
+                    this.deleteMarker();
+                }
+                
+                if (e.key === 'Escape') {
+                    document.getElementById('markerPopup').style.display = 'none';
+                    this.markerManager.resetForm();
+                }
+            });
+        }
+
+        saveMarker() {
+            if (!this.state.selectedMarkerId) {
+                alert('Please select a marker to edit, or click on the image to add a new marker.');
+                return;
+            }
+
+            const marker = this.state.getMarker(this.state.selectedMarkerId);
+            if (!marker) return;
+
+            const title = document.getElementById('markerTitle').value.trim();
+            const description = document.getElementById('markerDescription').value.trim();
+            const link = document.getElementById('markerLink').value.trim();
+            const video = document.getElementById('markerVideo').value.trim();
+            const audio = document.getElementById('markerAudio').value.trim();
+
+            if (!title) {
+                alert('Marker title is required');
+                return;
+            }
+
+            // Validate URLs if provided
+            if (link && !this.isValidUrl(link)) {
+                alert('Please enter a valid URL for the link');
+                return;
+            }
+            if (video && !this.isValidUrl(video)) {
+                alert('Please enter a valid URL for the video');
+                return;
+            }
+            if (audio && !this.isValidUrl(audio)) {
+                alert('Please enter a valid URL for the audio');
+                return;
+            }
+
+            const updatedMarker = this.state.updateMarker(marker.id, {
+                title,
+                description,
+                link,
+                video,
+                audio,
+                type: this.state.currentMarkerType
+            });
+
+            if (updatedMarker) {
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                this.markerManager.selectMarker(marker.id);
+                
+                // Update popup if open
+                if (document.getElementById('markerPopup').style.display === 'block') {
+                    this.markerManager.showMarkerPopup(updatedMarker);
+                }
+                
+                // Clear the form after saving
+                this.markerManager.resetForm();
+                alert('Marker updated!');
             }
         }
 
-        function downloadExportFile() {
+        deleteMarker() {
+            if (this.state.selectedMarkerId && confirm('Delete this marker?')) {
+                this.state.deleteMarker(this.state.selectedMarkerId);
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                document.getElementById('markerPopup').style.display = 'none';
+                this.markerManager.resetForm();
+            }
+        }
+
+        clearAllMarkers() {
+            if (this.state.markers.length === 0) return;
+            
+            if (confirm('Clear all markers? This cannot be undone.')) {
+                this.state.clearMarkers();
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                document.getElementById('markerPopup').style.display = 'none';
+                this.markerManager.resetForm();
+            }
+        }
+
+        undo() {
+            if (this.state.undo()) {
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                this.markerManager.resetForm();
+                return true;
+            }
+            return false;
+        }
+
+        redo() {
+            if (this.state.redo()) {
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                this.markerManager.resetForm();
+                return true;
+            }
+            return false;
+        }
+
+        isValidUrl(string) {
+            try {
+                new URL(string);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        saveProject() {
+            if (!this.state.currentImage) {
+                alert('Please upload an image first');
+                return;
+            }
+
+            const projectName = prompt('Project name:', 
+                this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Project');
+            if (!projectName) return;
+
+            const project = {
+                name: projectName,
+                image: this.state.currentImage,
+                markers: this.state.markers,
+                date: new Date().toISOString()
+            };
+
+            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
+            projects.push(project);
+            localStorage.setItem('projects', JSON.stringify(projects));
+            alert(`Project "${projectName}" saved!`);
+        }
+
+        loadProject() {
+            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
+            if (projects.length === 0) {
+                alert('No saved projects found');
+                return;
+            }
+
+            const projectNames = projects.map((p, i) => 
+                `${i + 1}. ${p.name} (${new Date(p.date).toLocaleDateString()})`
+            ).join('\n');
+
+            const selection = prompt(`Available projects:\n\n${projectNames}\n\nEnter project number or name:`);
+            let project = null;
+
+            if (selection) {
+                const index = parseInt(selection) - 1;
+                if (!isNaN(index) && index >= 0 && index < projects.length) {
+                    project = projects[index];
+                } else {
+                    project = projects.find(p => 
+                        p.name.toLowerCase().includes(selection.toLowerCase()));
+                }
+            }
+
+            if (project) {
+                this.state.currentImage = project.image;
+                this.state.markers = project.markers || [];
+                
+                document.getElementById('imageDisplay').src = project.image.src;
+                document.getElementById('imageDisplay').style.display = 'block';
+                document.getElementById('emptyState').style.display = 'none';
+                document.getElementById('currentImageName').textContent = project.name;
+                document.getElementById('imageInfo').classList.remove('hidden');
+                
+                setTimeout(() => {
+                    this.markerManager.renderAllMarkers();
+                    this.markerManager.updateMarkerList();
+                    this.markerManager.resetForm();
+                    this.state.saveToHistory();
+                    alert(`Project "${project.name}" loaded!`);
+                }, 100);
+            } else {
+                alert('Project not found');
+            }
+        }
+
+        exportProject() {
+            if (!this.state.currentImage || this.state.markers.length === 0) {
+                alert('Please create a project with markers first');
+                return;
+            }
+
+            const projectName = prompt('Project name for export:', 
+                this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Interactive Image');
+            if (!projectName) return;
+
+            const responsive = confirm('Enable responsive design for mobile devices?');
+            const smartPositioning = confirm('Use smart popup positioning (avoid off-screen popups)?');
+            
+            const html = this.exportManager.generateExportHTML(projectName, { 
+                responsive, 
+                smartPositioning 
+            });
+            
+            document.getElementById('exportCode').value = html;
+            document.getElementById('exportModal').classList.remove('hidden');
+        }
+
+        copyExportCode() {
+            const exportCode = document.getElementById('exportCode');
+            exportCode.select();
+            exportCode.setSelectionRange(0, 99999);
+            
+            try {
+                navigator.clipboard.writeText(exportCode.value).then(() => {
+                    alert('Code copied to clipboard! Save it as an HTML file.');
+                });
+            } catch (err) {
+                // Fallback for older browsers
+                try {
+                    document.execCommand('copy');
+                    alert('Code copied to clipboard! Save it as an HTML file.');
+                } catch (err) {
+                    alert('Failed to copy code. Please select and copy manually.');
+                }
+            }
+        }
+
+        downloadExportFile() {
             const exportCode = document.getElementById('exportCode').value;
             const blob = new Blob([exportCode], { type: 'text/html' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const projectName = prompt('Enter filename:', currentImage?.name.replace(/\.[^/.]+$/, "") || 'interactive-image') || 'interactive-image';
+            
+            const projectName = prompt('Enter filename:', 
+                this.state.currentImage?.name.replace(/\.[^/.]+$/, "") || 'interactive-image') || 'interactive-image';
             a.download = `${projectName}.html`;
+            
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+    }
 
-        // Handle window resize
-        let resizeTimeout;
-        window.addEventListener('resize', function() {
-            clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(() => {
-                if (currentImage) {
-                    renderAllMarkers();
-                }
-            }, 250);
-        });
-
-        // Start the app
-        document.addEventListener('DOMContentLoaded', init);
-    </script>
+    // ====================== START APPLICATION ======================
+    document.addEventListener('DOMContentLoaded', () => {
+        window.app = new Application();
+    });
+</script>
 </body>
 </html>
