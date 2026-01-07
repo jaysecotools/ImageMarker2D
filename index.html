@@ -1,5 +1,4 @@
-<-- FIXES:
-Side-panel marker cards and buttons now worknow work. Markers are selectable and editable/deletable from the cards and from the main image. Markers appear in the correct location and export correctly. -->
+<-- FIXES: Markers can now be dragged to different locations while editing. All other functions remain and the app is fully functional -->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -158,6 +157,32 @@ Side-panel marker cards and buttons now worknow work. Markers are selectable and
         .marker-type.warning { color: #f8961e; }
         .marker-type.question { color: #2a9d8f; }
         
+/* Add to your existing CSS in the marker styles section */
+
+.marker.dragging {
+    cursor: grabbing !important;
+    z-index: 20 !important;
+    opacity: 0.8 !important;
+    box-shadow: 0 0 0 3px white, 0 0 15px rgba(0, 180, 216, 0.8) !important;
+    transform: translate(-50%, -50%) scale(1.3) !important;
+}
+
+.marker:hover {
+    cursor: grab;
+}
+
+.marker:active {
+    cursor: grabbing;
+}
+
+/* Add a hint about dragging */
+.shortcut-hint {
+    font-size: 0.8rem;
+    color: #aaa;
+    margin-top: 10px;
+    text-align: center;
+}
+
         /* Form styles */
         .marker-form input, 
         .marker-form textarea { 
@@ -645,739 +670,852 @@ Side-panel marker cards and buttons now worknow work. Markers are selectable and
     </div>
 
 <script>
-    // ====================== APPLICATION STATE ======================
-    class AppState {
-        constructor() {
-            this.markers = [];
-            this.currentImage = null;
-            this.selectedMarkerId = null;
-            this.currentMarkerType = 'info';
-            this.history = [];
-            this.historyIndex = -1;
-            this.previewMarker = null;
-        }
+// ====================== ENHANCED APPLICATION WITH DRAGGABLE MARKERS ======================
+class AppState {
+    constructor() {
+        this.markers = [];
+        this.currentImage = null;
+        this.selectedMarkerId = null;
+        this.currentMarkerType = 'info';
+        this.history = [];
+        this.historyIndex = -1;
+        this.previewMarker = null;
+        this.draggingMarker = null;
+        this.dragStartX = 0;
+        this.dragStartY = 0;
+        this.markerStartX = 0;
+        this.markerStartY = 0;
+    }
 
-        addMarker(marker) {
-            this.markers.push(marker);
+    addMarker(marker) {
+        this.markers.push(marker);
+        this.saveToHistory();
+    }
+
+    updateMarker(id, updates) {
+        const index = this.markers.findIndex(m => m.id === id);
+        if (index !== -1) {
+            this.markers[index] = { ...this.markers[index], ...updates };
             this.saveToHistory();
+            return this.markers[index];
         }
+        return null;
+    }
 
-        updateMarker(id, updates) {
-            const index = this.markers.findIndex(m => m.id === id);
-            if (index !== -1) {
-                this.markers[index] = { ...this.markers[index], ...updates };
-                this.saveToHistory();
-                return this.markers[index];
+    deleteMarker(id) {
+        this.markers = this.markers.filter(m => m.id !== id);
+        this.saveToHistory();
+    }
+
+    clearMarkers() {
+        this.markers = [];
+        this.saveToHistory();
+    }
+
+    getMarker(id) {
+        let marker = this.markers.find(m => m.id === id);
+        if (!marker && typeof id === 'string') {
+            const numericId = parseFloat(id);
+            if (!isNaN(numericId)) {
+                marker = this.markers.find(m => m.id === numericId);
             }
-            return null;
         }
-
-        deleteMarker(id) {
-            this.markers = this.markers.filter(m => m.id !== id);
-            this.saveToHistory();
+        if (!marker && typeof id === 'number') {
+            marker = this.markers.find(m => String(m.id) === String(id));
         }
+        return marker;
+    }
 
-        clearMarkers() {
-            this.markers = [];
-            this.saveToHistory();
-        }
+    saveToHistory() {
+        this.history = this.history.slice(0, this.historyIndex + 1);
+        this.history.push({
+            markers: JSON.parse(JSON.stringify(this.markers)),
+            image: this.currentImage ? { ...this.currentImage } : null
+        });
+        this.historyIndex++;
+        this.updateHistoryControls();
+    }
 
-        getMarker(id) {
-            // First try exact match
-            let marker = this.markers.find(m => m.id === id);
-            
-            // If not found and id is a string, try converting to number
-            if (!marker && typeof id === 'string') {
-                const numericId = parseFloat(id);
-                if (!isNaN(numericId)) {
-                    marker = this.markers.find(m => m.id === numericId);
-                }
-            }
-            
-            // If not found and id is a number, try converting to string
-            if (!marker && typeof id === 'number') {
-                marker = this.markers.find(m => String(m.id) === String(id));
-            }
-            
-            return marker;
-        }
-
-        saveToHistory() {
-            // Trim future history if we're not at the end
-            this.history = this.history.slice(0, this.historyIndex + 1);
-            
-            // Save current state
-            this.history.push({
-                markers: JSON.parse(JSON.stringify(this.markers)),
-                image: this.currentImage ? { ...this.currentImage } : null
-            });
-            
-            this.historyIndex++;
+    undo() {
+        if (this.historyIndex > 0) {
+            this.historyIndex--;
+            const state = this.history[this.historyIndex];
+            this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
+            this.currentImage = state.image ? { ...state.image } : null;
             this.updateHistoryControls();
+            return true;
         }
+        return false;
+    }
 
-        undo() {
-            if (this.historyIndex > 0) {
-                this.historyIndex--;
-                const state = this.history[this.historyIndex];
-                this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
-                this.currentImage = state.image ? { ...state.image } : null;
-                this.updateHistoryControls();
-                return true;
+    redo() {
+        if (this.historyIndex < this.history.length - 1) {
+            this.historyIndex++;
+            const state = this.history[this.historyIndex];
+            this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
+            this.currentImage = state.image ? { ...state.image } : null;
+            this.updateHistoryControls();
+            return true;
+        }
+        return false;
+    }
+
+    updateHistoryControls() {
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        if (undoBtn) undoBtn.disabled = this.historyIndex <= 0;
+        if (redoBtn) redoBtn.disabled = this.historyIndex >= this.history.length - 1;
+    }
+}
+
+class MarkerManager {
+    constructor(state) {
+        this.state = state;
+        this.markerThemes = {
+            info: { color: '#4cc9f0', icon: 'info-circle' },
+            link: { color: '#4361ee', icon: 'link' },
+            video: { color: '#f72585', icon: 'video' },
+            audio: { color: '#7209b7', icon: 'volume-up' },
+            warning: { color: '#f8961e', icon: 'exclamation-triangle' },
+            question: { color: '#2a9d8f', icon: 'question-circle' }
+        };
+        this.setupEventListeners();
+        this.setupDragAndDrop();
+    }
+
+    setupEventListeners() {
+        const markerList = document.getElementById('markerList');
+        markerList.replaceWith(markerList.cloneNode(true));
+        const freshMarkerList = document.getElementById('markerList');
+        freshMarkerList.addEventListener('click', (e) => {
+            this.handleMarkerCardClick(e);
+        });
+    }
+
+    setupDragAndDrop() {
+        const imageContainer = document.getElementById('imageContainer');
+        
+        // Mouse event handlers for dragging
+        imageContainer.addEventListener('mousedown', (e) => this.handleMarkerMouseDown(e));
+        imageContainer.addEventListener('mousemove', (e) => this.handleMarkerMouseMove(e));
+        imageContainer.addEventListener('mouseup', () => this.handleMarkerMouseUp());
+        
+        // Touch event handlers for mobile devices
+        imageContainer.addEventListener('touchstart', (e) => this.handleMarkerTouchStart(e), { passive: false });
+        imageContainer.addEventListener('touchmove', (e) => this.handleMarkerTouchMove(e), { passive: false });
+        imageContainer.addEventListener('touchend', () => this.handleMarkerMouseUp());
+        
+        // Prevent default drag behavior on markers
+        imageContainer.addEventListener('dragstart', (e) => {
+            if (e.target.classList.contains('marker')) {
+                e.preventDefault();
             }
-            return false;
-        }
+        });
+    }
 
-        redo() {
-            if (this.historyIndex < this.history.length - 1) {
-                this.historyIndex++;
-                const state = this.history[this.historyIndex];
-                this.markers = state.markers ? JSON.parse(JSON.stringify(state.markers)) : [];
-                this.currentImage = state.image ? { ...state.image } : null;
-                this.updateHistoryControls();
-                return true;
-            }
-            return false;
-        }
+    handleMarkerMouseDown(e) {
+        // Only handle left mouse button
+        if (e.button !== 0) return;
+        
+        const markerElement = e.target.closest('.marker');
+        if (!markerElement || markerElement.classList.contains('preview')) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const markerId = markerElement.dataset.id;
+        const marker = this.state.getMarker(markerId);
+        if (!marker) return;
+        
+        this.state.draggingMarker = marker;
+        this.state.dragStartX = e.clientX;
+        this.state.dragStartY = e.clientY;
+        this.state.markerStartX = marker.x;
+        this.state.markerStartY = marker.y;
+        
+        // Add dragging class for visual feedback
+        markerElement.classList.add('dragging');
+        
+        // Hide popup during drag
+        document.getElementById('markerPopup').style.display = 'none';
+    }
 
-        updateHistoryControls() {
-            const undoBtn = document.getElementById('undoBtn');
-            const redoBtn = document.getElementById('redoBtn');
+    handleMarkerTouchStart(e) {
+        const markerElement = e.target.closest('.marker');
+        if (!markerElement || markerElement.classList.contains('preview')) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const markerId = markerElement.dataset.id;
+        const marker = this.state.getMarker(markerId);
+        if (!marker) return;
+        
+        const touch = e.touches[0];
+        this.state.draggingMarker = marker;
+        this.state.dragStartX = touch.clientX;
+        this.state.dragStartY = touch.clientY;
+        this.state.markerStartX = marker.x;
+        this.state.markerStartY = marker.y;
+        
+        markerElement.classList.add('dragging');
+        document.getElementById('markerPopup').style.display = 'none';
+    }
+
+    handleMarkerMouseMove(e) {
+        if (!this.state.draggingMarker) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const deltaX = e.clientX - this.state.dragStartX;
+        const deltaY = e.clientY - this.state.dragStartY;
+        
+        this.updateMarkerPosition(deltaX, deltaY);
+    }
+
+    handleMarkerTouchMove(e) {
+        if (!this.state.draggingMarker) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - this.state.dragStartX;
+        const deltaY = touch.clientY - this.state.dragStartY;
+        
+        this.updateMarkerPosition(deltaX, deltaY);
+    }
+
+    updateMarkerPosition(deltaX, deltaY) {
+        const container = document.getElementById('imageContainer');
+        const img = document.getElementById('imageDisplay');
+        if (!container || !img) return;
+        
+        const containerRect = container.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        
+        // Calculate pixel movement relative to image
+        const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+        const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+        
+        // Convert pixel delta to percentage
+        const percentDeltaX = (deltaX / imgRect.width) * 100;
+        const percentDeltaY = (deltaY / imgRect.height) * 100;
+        
+        // Calculate new position
+        let newX = this.state.markerStartX + percentDeltaX;
+        let newY = this.state.markerStartY + percentDeltaY;
+        
+        // Clamp to image bounds
+        newX = Math.max(0, Math.min(100, newX));
+        newY = Math.max(0, Math.min(100, newY));
+        
+        // Update marker data
+        this.state.draggingMarker.x = newX;
+        this.state.draggingMarker.y = newY;
+        
+        // Update marker element position
+        const markerElement = document.querySelector(`.marker[data-id="${this.state.draggingMarker.id}"]`);
+        if (markerElement) {
+            // Update data attributes
+            markerElement.dataset.x = newX;
+            markerElement.dataset.y = newY;
             
-            if (undoBtn) undoBtn.disabled = this.historyIndex <= 0;
-            if (redoBtn) redoBtn.disabled = this.historyIndex >= this.history.length - 1;
+            // Calculate visual position
+            const markerX = imageOffsetX + (newX / 100) * imgRect.width;
+            const markerY = imageOffsetY + (newY / 100) * imgRect.height;
+            
+            markerElement.style.left = `${markerX}px`;
+            markerElement.style.top = `${markerY}px`;
         }
     }
 
-    // ====================== MARKER MANAGER ======================
-    class MarkerManager {
-        constructor(state) {
-            this.state = state;
-            this.markerThemes = {
-                info: { color: '#4cc9f0', icon: 'info-circle' },
-                link: { color: '#4361ee', icon: 'link' },
-                video: { color: '#f72585', icon: 'video' },
-                audio: { color: '#7209b7', icon: 'volume-up' },
-                warning: { color: '#f8961e', icon: 'exclamation-triangle' },
-                question: { color: '#2a9d8f', icon: 'question-circle' }
-            };
-            this.setupEventListeners();
+    handleMarkerMouseUp() {
+        if (!this.state.draggingMarker) return;
+        
+        // Update the marker in state
+        this.state.updateMarker(this.state.draggingMarker.id, {
+            x: this.state.draggingMarker.x,
+            y: this.state.draggingMarker.y
+        });
+        
+        // Remove dragging class
+        const markerElement = document.querySelector(`.marker[data-id="${this.state.draggingMarker.id}"]`);
+        if (markerElement) {
+            markerElement.classList.remove('dragging');
         }
+        
+        // Show popup again
+        this.showMarkerPopup(this.state.draggingMarker);
+        
+        // Clear dragging state
+        this.state.draggingMarker = null;
+    }
 
-        setupEventListeners() {
-            // Use event delegation on the marker list container
-            const markerList = document.getElementById('markerList');
-            
-            // Remove any existing event listeners by cloning
-            markerList.replaceWith(markerList.cloneNode(true));
-            
-            // Get the fresh element
-            const freshMarkerList = document.getElementById('markerList');
-            
-            // Add a single event listener that works for all current and future marker items
-            freshMarkerList.addEventListener('click', (e) => {
-                this.handleMarkerCardClick(e);
-            });
+    handleMarkerCardClick(e) {
+        const markerItem = e.target.closest('.marker-item');
+        if (!markerItem) return;
+        
+        const markerId = markerItem.dataset.id;
+        const marker = this.state.getMarker(markerId);
+        if (!marker) return;
+        
+        if (e.target.classList.contains('edit') || e.target.closest('.edit')) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.selectMarker(marker.id);
+            this.populateFormWithMarker(marker);
+            return;
         }
+        
+        if (e.target.classList.contains('delete') || e.target.closest('.delete')) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (confirm('Delete this marker?')) {
+                this.state.deleteMarker(marker.id);
+                this.renderAllMarkers();
+                this.updateMarkerList();
+                document.getElementById('markerPopup').style.display = 'none';
+                this.resetForm();
+            }
+            return;
+        }
+        
+        this.selectMarker(marker.id);
+        this.showMarkerPopup(marker);
+    }
 
-        handleMarkerCardClick(e) {
-            // Find the closest marker item
-            const markerItem = e.target.closest('.marker-item');
-            if (!markerItem) return;
+    createMarkerElement(marker) {
+        const existingMarker = document.querySelector(`.marker[data-id="${marker.id}"]`);
+        if (existingMarker) existingMarker.remove();
+        
+        const element = document.createElement('div');
+        element.className = `marker ${marker.type}`;
+        element.dataset.id = marker.id;
+        element.dataset.x = marker.x;
+        element.dataset.y = marker.y;
+        
+        // Add cursor style for draggable markers
+        element.style.cursor = 'grab';
+        
+        element.innerHTML = `<i class="fas fa-${this.markerThemes[marker.type].icon}"></i>`;
+        
+        // Click handler for selecting/showing popup
+        element.addEventListener('click', (e) => {
+            // Don't trigger click if we just finished dragging
+            if (element.classList.contains('dragging')) return;
             
-            const markerId = markerItem.dataset.id;
-            const marker = this.state.getMarker(markerId);
-            if (!marker) return;
-            
-            // Check if edit button was clicked
-            if (e.target.classList.contains('edit') || e.target.closest('.edit')) {
-                e.preventDefault();
-                e.stopPropagation();
-                this.selectMarker(marker.id);
-                this.populateFormWithMarker(marker);
-                return;
-            }
-            
-            // Check if delete button was clicked
-            if (e.target.classList.contains('delete') || e.target.closest('.delete')) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (confirm('Delete this marker?')) {
-                    this.state.deleteMarker(marker.id);
-                    this.renderAllMarkers();
-                    this.updateMarkerList();
-                    document.getElementById('markerPopup').style.display = 'none';
-                    this.resetForm();
-                }
-                return;
-            }
-            
-            // Otherwise, clicked on the marker card itself
+            e.stopPropagation();
             this.selectMarker(marker.id);
             this.showMarkerPopup(marker);
-        }
+        });
+        
+        return element;
+    }
 
-        createMarkerElement(marker) {
-            // Remove any existing marker with same ID
-            const existingMarker = document.querySelector(`.marker[data-id="${marker.id}"]`);
-            if (existingMarker) existingMarker.remove();
-            
-            const element = document.createElement('div');
-            element.className = `marker ${marker.type}`;
-            element.dataset.id = marker.id;
-            
-            // Store percentage coordinates as data attributes
-            element.dataset.x = marker.x;
-            element.dataset.y = marker.y;
-            
-            element.innerHTML = `<i class="fas fa-${this.markerThemes[marker.type].icon}"></i>`;
-            
-            element.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.selectMarker(marker.id);
-                this.showMarkerPopup(marker);
-            });
-            
-            return element;
-        }
+    positionMarkerElement(element) {
+        const container = document.getElementById('imageContainer');
+        const img = document.getElementById('imageDisplay');
+        
+        if (!container || !img) return;
+        
+        const containerRect = container.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        
+        const percentX = parseFloat(element.dataset.x);
+        const percentY = parseFloat(element.dataset.y);
+        
+        const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+        const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+        
+        const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
+        const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
+        
+        element.style.left = `${markerX}px`;
+        element.style.top = `${markerY}px`;
+    }
 
-        positionMarkerElement(element) {
-            const container = document.getElementById('imageContainer');
-            const img = document.getElementById('imageDisplay');
-            
-            if (!container || !img) return;
-            
-            const containerRect = container.getBoundingClientRect();
-            const imgRect = img.getBoundingClientRect();
-            
-            // Get the percentage coordinates
-            const percentX = parseFloat(element.dataset.x);
-            const percentY = parseFloat(element.dataset.y);
-            
-            // Calculate where the image starts within the container
-            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
-            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
-            
-            // Calculate marker position in pixels relative to container
-            const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
-            const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
-            
-            element.style.left = `${markerX}px`;
-            element.style.top = `${markerY}px`;
-        }
+    renderAllMarkers() {
+        document.querySelectorAll('.marker:not(.preview)').forEach(m => m.remove());
+        
+        this.state.markers.forEach(marker => {
+            const element = this.createMarkerElement(marker);
+            document.getElementById('imageContainer').appendChild(element);
+            this.positionMarkerElement(element);
+        });
+    }
 
-        renderAllMarkers() {
-            // Clear existing markers
-            document.querySelectorAll('.marker:not(.preview)').forEach(m => m.remove());
-            
-            // Render all markers
-            this.state.markers.forEach(marker => {
-                const element = this.createMarkerElement(marker);
-                document.getElementById('imageContainer').appendChild(element);
-                // Position the marker after adding to DOM
-                this.positionMarkerElement(element);
-            });
-        }
+    selectMarker(id) {
+        document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
+        document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
+        
+        const markerElement = document.querySelector(`.marker[data-id="${id}"]`);
+        const markerItem = document.querySelector(`.marker-item[data-id="${String(id)}"]`);
+        
+        if (markerElement) markerElement.classList.add('selected');
+        if (markerItem) markerItem.classList.add('selected');
+        
+        this.state.selectedMarkerId = id;
+        document.getElementById('deleteMarker').style.display = 'inline-block';
+    }
 
-        selectMarker(id) {
-            // Deselect all
-            document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
-            document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
-            
-            // Select the marker
-            const markerElement = document.querySelector(`.marker[data-id="${id}"]`);
-            const markerItem = document.querySelector(`.marker-item[data-id="${String(id)}"]`);
-            
-            if (markerElement) markerElement.classList.add('selected');
-            if (markerItem) markerItem.classList.add('selected');
-            
-            this.state.selectedMarkerId = id;
-            document.getElementById('deleteMarker').style.display = 'inline-block';
-        }
-
-        showMarkerPopup(marker) {
-            const popup = document.getElementById('markerPopup');
-            const title = document.getElementById('popupTitle');
-            const description = document.getElementById('popupDescription');
-            const link = document.getElementById('popupLink');
-            const media = document.getElementById('popupMedia');
-            
-            title.textContent = marker.title;
-            description.textContent = marker.description;
-            
-            // Clear previous content
-            link.style.display = 'none';
-            media.innerHTML = '';
-            
-            // Show appropriate content based on marker type
-            switch(marker.type) {
-                case 'link':
-                    if (marker.link) {
-                        link.href = marker.link;
-                        link.textContent = marker.link.length > 50 ? 
-                            marker.link.substring(0, 50) + '...' : marker.link;
-                        link.style.display = 'block';
-                    }
-                    break;
-                case 'video':
-                    if (marker.video) {
-                        const videoElement = this.createMediaElement(marker.video, 'video');
-                        if (videoElement) media.appendChild(videoElement);
-                    }
-                    break;
-                case 'audio':
-                    if (marker.audio) {
-                        const audioElement = this.createMediaElement(marker.audio, 'audio');
-                        if (audioElement) media.appendChild(audioElement);
-                    }
-                    break;
-            }
-            
-            // Position popup
-            this.positionPopup(popup, marker);
-            popup.style.display = 'block';
-        }
-
-        positionPopup(popup, marker) {
-            const container = document.getElementById('imageContainer');
-            const containerRect = container.getBoundingClientRect();
-            
-            // Find the selected marker element
-            const markerElement = document.querySelector(`.marker[data-id="${marker.id}"]`);
-            if (!markerElement) return;
-            
-            const markerRect = markerElement.getBoundingClientRect();
-            
-            // Calculate marker center relative to container
-            const markerX = markerRect.left + markerRect.width / 2 - containerRect.left;
-            const markerY = markerRect.top + markerRect.height / 2 - containerRect.top;
-            
-            const popupWidth = popup.offsetWidth || 300;
-            const popupHeight = popup.offsetHeight || 200;
-            
-            // Try to position to the right of the marker
-            let left = markerX + 40;
-            let top = markerY - popupHeight / 2;
-            
-            // Adjust if goes outside container
-            if (left + popupWidth > containerRect.width - 20) {
-                left = markerX - popupWidth - 40;
-            }
-            if (left < 20) left = 20;
-            
-            if (top + popupHeight > containerRect.height - 20) {
-                top = containerRect.height - popupHeight - 20;
-            }
-            if (top < 20) top = 20;
-            
-            popup.style.left = `${left}px`;
-            popup.style.top = `${top}px`;
-        }
-
-        createMediaElement(url, type) {
-            if (!url) return null;
-            
-            if (type === 'video') {
-                if (url.includes('youtube.com') || url.includes('youtu.be')) {
-                    const videoId = this.extractYouTubeId(url);
-                    if (videoId) {
-                        const container = document.createElement('div');
-                        container.className = 'video-container';
-                        
-                        const iframe = document.createElement('iframe');
-                        iframe.src = `https://www.youtube.com/embed/${videoId}`;
-                        iframe.allowFullscreen = true;
-                        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-                        
-                        container.appendChild(iframe);
-                        return container;
-                    }
+    showMarkerPopup(marker) {
+        const popup = document.getElementById('markerPopup');
+        const title = document.getElementById('popupTitle');
+        const description = document.getElementById('popupDescription');
+        const link = document.getElementById('popupLink');
+        const media = document.getElementById('popupMedia');
+        
+        title.textContent = marker.title;
+        description.textContent = marker.description;
+        
+        link.style.display = 'none';
+        media.innerHTML = '';
+        
+        switch(marker.type) {
+            case 'link':
+                if (marker.link) {
+                    link.href = marker.link;
+                    link.textContent = marker.link.length > 50 ? 
+                        marker.link.substring(0, 50) + '...' : marker.link;
+                    link.style.display = 'block';
                 }
-                
-                // Generic video
-                const container = document.createElement('div');
-                container.className = 'video-container';
-                const video = document.createElement('video');
-                video.src = url;
-                video.controls = true;
-                video.className = 'popup-video';
-                container.appendChild(video);
-                return container;
-                
-            } else if (type === 'audio') {
-                const audio = document.createElement('audio');
-                audio.src = url;
-                audio.controls = true;
-                audio.className = 'popup-audio';
-                return audio;
-            }
-            
-            return null;
+                break;
+            case 'video':
+                if (marker.video) {
+                    const videoElement = this.createMediaElement(marker.video, 'video');
+                    if (videoElement) media.appendChild(videoElement);
+                }
+                break;
+            case 'audio':
+                if (marker.audio) {
+                    const audioElement = this.createMediaElement(marker.audio, 'audio');
+                    if (audioElement) media.appendChild(audioElement);
+                }
+                break;
         }
+        
+        this.positionPopup(popup, marker);
+        popup.style.display = 'block';
+    }
 
-        extractYouTubeId(url) {
-            const patterns = [
-                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
-                /^([A-Za-z0-9_-]{11})$/
-            ];
-            
-            for (const pattern of patterns) {
-                const match = url.match(pattern);
-                if (match && match[1]) {
-                    return match[1];
+    positionPopup(popup, marker) {
+        const container = document.getElementById('imageContainer');
+        const containerRect = container.getBoundingClientRect();
+        
+        const markerElement = document.querySelector(`.marker[data-id="${marker.id}"]`);
+        if (!markerElement) return;
+        
+        const markerRect = markerElement.getBoundingClientRect();
+        const markerX = markerRect.left + markerRect.width / 2 - containerRect.left;
+        const markerY = markerRect.top + markerRect.height / 2 - containerRect.top;
+        
+        const popupWidth = popup.offsetWidth || 300;
+        const popupHeight = popup.offsetHeight || 200;
+        
+        let left = markerX + 40;
+        let top = markerY - popupHeight / 2;
+        
+        if (left + popupWidth > containerRect.width - 20) {
+            left = markerX - popupWidth - 40;
+        }
+        if (left < 20) left = 20;
+        
+        if (top + popupHeight > containerRect.height - 20) {
+            top = containerRect.height - popupHeight - 20;
+        }
+        if (top < 20) top = 20;
+        
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+    }
+
+    createMediaElement(url, type) {
+        if (!url) return null;
+        
+        if (type === 'video') {
+            if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                const videoId = this.extractYouTubeId(url);
+                if (videoId) {
+                    const container = document.createElement('div');
+                    container.className = 'video-container';
+                    
+                    const iframe = document.createElement('iframe');
+                    iframe.src = `https://www.youtube.com/embed/${videoId}`;
+                    iframe.allowFullscreen = true;
+                    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+                    
+                    container.appendChild(iframe);
+                    return container;
                 }
             }
-            return null;
+            
+            const container = document.createElement('div');
+            container.className = 'video-container';
+            const video = document.createElement('video');
+            video.src = url;
+            video.controls = true;
+            video.className = 'popup-video';
+            container.appendChild(video);
+            return container;
+            
+        } else if (type === 'audio') {
+            const audio = document.createElement('audio');
+            audio.src = url;
+            audio.controls = true;
+            audio.className = 'popup-audio';
+            return audio;
         }
+        
+        return null;
+    }
 
-        updateMarkerList() {
-            const markerList = document.getElementById('markerList');
-            const listCount = document.getElementById('markerListCount');
-            const markerCount = document.getElementById('markerCount');
-            
-            if (this.state.markers.length === 0) {
-                markerList.innerHTML = '<div class="empty-state">No markers added</div>';
-                listCount.textContent = '0';
-                markerCount.textContent = '0';
-                return;
+    extractYouTubeId(url) {
+        const patterns = [
+            /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+            /^([A-Za-z0-9_-]{11})$/
+        ];
+        
+        for (const pattern of patterns) {
+            const match = url.match(pattern);
+            if (match && match[1]) {
+                return match[1];
             }
-            
-            let html = '';
-            this.state.markers.forEach(marker => {
-                html += `
-                    <div class="marker-item" data-id="${String(marker.id)}">
-                        <div class="marker-item-header">
-                            <div class="marker-item-title">
-                                <i class="fas fa-${this.markerThemes[marker.type].icon}"></i>
-                                ${marker.title}
-                            </div>
-                            <span class="marker-item-type">${marker.type}</span>
+        }
+        return null;
+    }
+
+    updateMarkerList() {
+        const markerList = document.getElementById('markerList');
+        const listCount = document.getElementById('markerListCount');
+        const markerCount = document.getElementById('markerCount');
+        
+        if (this.state.markers.length === 0) {
+            markerList.innerHTML = '<div class="empty-state">No markers added</div>';
+            listCount.textContent = '0';
+            markerCount.textContent = '0';
+            return;
+        }
+        
+        let html = '';
+        this.state.markers.forEach(marker => {
+            html += `
+                <div class="marker-item" data-id="${String(marker.id)}">
+                    <div class="marker-item-header">
+                        <div class="marker-item-title">
+                            <i class="fas fa-${this.markerThemes[marker.type].icon}"></i>
+                            ${marker.title}
                         </div>
-                        <div class="marker-item-description">${marker.description || 'No description'}</div>
-                        <div class="marker-item-actions">
-                            <button class="marker-action-btn edit" data-id="${String(marker.id)}">
-                                <i class="fas fa-edit"></i> Edit
-                            </button>
-                            <button class="marker-action-btn delete" data-id="${String(marker.id)}">
-                                <i class="fas fa-trash"></i> Delete
-                            </button>
-                        </div>
+                        <span class="marker-item-type">${marker.type}</span>
                     </div>
-                `;
-            });
-            
-            markerList.innerHTML = html;
-            listCount.textContent = this.state.markers.length;
-            markerCount.textContent = this.state.markers.length;
-        }
+                    <div class="marker-item-description">${marker.description || 'No description'}</div>
+                    <div class="marker-item-actions">
+                        <button class="marker-action-btn edit" data-id="${String(marker.id)}">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button class="marker-action-btn delete" data-id="${String(marker.id)}">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        markerList.innerHTML = html;
+        listCount.textContent = this.state.markers.length;
+        markerCount.textContent = this.state.markers.length;
+    }
 
-        populateFormWithMarker(marker) {
-            document.getElementById('markerTitle').value = marker.title;
-            document.getElementById('markerDescription').value = marker.description || '';
-            document.getElementById('markerLink').value = marker.link || '';
-            document.getElementById('markerVideo').value = marker.video || '';
-            document.getElementById('markerAudio').value = marker.audio || '';
-            
-            // Set marker type
-            document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
-            document.querySelector(`.marker-type[data-type="${marker.type}"]`).classList.add('selected');
-            this.state.currentMarkerType = marker.type;
-            this.updateFieldsVisibility();
-            
-            document.getElementById('deleteMarker').style.display = 'inline-block';
-        }
+    populateFormWithMarker(marker) {
+        document.getElementById('markerTitle').value = marker.title;
+        document.getElementById('markerDescription').value = marker.description || '';
+        document.getElementById('markerLink').value = marker.link || '';
+        document.getElementById('markerVideo').value = marker.video || '';
+        document.getElementById('markerAudio').value = marker.audio || '';
+        
+        document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
+        document.querySelector(`.marker-type[data-type="${marker.type}"]`).classList.add('selected');
+        this.state.currentMarkerType = marker.type;
+        this.updateFieldsVisibility();
+        
+        document.getElementById('deleteMarker').style.display = 'inline-block';
+    }
 
-        updateFieldsVisibility() {
-            document.querySelectorAll('.url-field').forEach(field => field.classList.remove('visible'));
-            
-            switch(this.state.currentMarkerType) {
-                case 'link':
-                    document.getElementById('markerLink').classList.add('visible');
-                    break;
-                case 'video':
-                    document.getElementById('markerVideo').classList.add('visible');
-                    break;
-                case 'audio':
-                    document.getElementById('markerAudio').classList.add('visible');
-                    break;
-            }
-        }
-
-        resetForm() {
-            document.getElementById('markerTitle').value = '';
-            document.getElementById('markerDescription').value = '';
-            document.getElementById('markerLink').value = '';
-            document.getElementById('markerVideo').value = '';
-            document.getElementById('markerAudio').value = '';
-            document.getElementById('deleteMarker').style.display = 'none';
-            this.state.selectedMarkerId = null;
-            
-            // Reset to default marker type
-            document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
-            document.querySelector('.marker-type[data-type="info"]').classList.add('selected');
-            this.state.currentMarkerType = 'info';
-            this.updateFieldsVisibility();
-            
-            // Deselect all markers
-            document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
-            document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
-            
-            // Hide popup
-            document.getElementById('markerPopup').style.display = 'none';
-        }
-
-        filterMarkers(searchTerm) {
-            const items = document.querySelectorAll('.marker-item');
-            let visibleCount = 0;
-            
-            items.forEach(item => {
-                const title = item.querySelector('.marker-item-title').textContent.toLowerCase();
-                const type = item.querySelector('.marker-item-type').textContent.toLowerCase();
-                const description = item.querySelector('.marker-item-description').textContent.toLowerCase();
-                
-                if (title.includes(searchTerm) || type.includes(searchTerm) || description.includes(searchTerm)) {
-                    item.style.display = 'flex';
-                    visibleCount++;
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-            
-            if (visibleCount === 0 && searchTerm) {
-                document.getElementById('markerList').innerHTML = '<div class="empty-state">No markers found</div>';
-            }
+    updateFieldsVisibility() {
+        document.querySelectorAll('.url-field').forEach(field => field.classList.remove('visible'));
+        
+        switch(this.state.currentMarkerType) {
+            case 'link':
+                document.getElementById('markerLink').classList.add('visible');
+                break;
+            case 'video':
+                document.getElementById('markerVideo').classList.add('visible');
+                break;
+            case 'audio':
+                document.getElementById('markerAudio').classList.add('visible');
+                break;
         }
     }
 
-    // ====================== IMAGE MANAGER ======================
-    class ImageManager {
-        constructor(state, markerManager) {
-            this.state = state;
-            this.markerManager = markerManager;
-            this.isMouseOverImage = false;
-        }
+    resetForm() {
+        document.getElementById('markerTitle').value = '';
+        document.getElementById('markerDescription').value = '';
+        document.getElementById('markerLink').value = '';
+        document.getElementById('markerVideo').value = '';
+        document.getElementById('markerAudio').value = '';
+        document.getElementById('deleteMarker').style.display = 'none';
+        this.state.selectedMarkerId = null;
+        
+        document.querySelectorAll('.marker-type').forEach(el => el.classList.remove('selected'));
+        document.querySelector('.marker-type[data-type="info"]').classList.add('selected');
+        this.state.currentMarkerType = 'info';
+        this.updateFieldsVisibility();
+        
+        document.querySelectorAll('.marker').forEach(m => m.classList.remove('selected'));
+        document.querySelectorAll('.marker-item').forEach(m => m.classList.remove('selected'));
+        
+        document.getElementById('markerPopup').style.display = 'none';
+    }
 
-        async loadImage(file) {
-            return new Promise((resolve, reject) => {
-                if (!file.type.startsWith('image/')) {
-                    reject('Please upload a valid image file');
-                    return;
-                }
-                
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        this.state.currentImage = {
-                            src: e.target.result,
-                            width: img.width,
-                            height: img.height,
-                            name: file.name
-                        };
-                        
-                        document.getElementById('imageDisplay').src = e.target.result;
-                        document.getElementById('imageDisplay').style.display = 'block';
-                        document.getElementById('emptyState').style.display = 'none';
-                        document.getElementById('currentImageName').textContent = file.name;
-                        document.getElementById('imageInfo').classList.remove('hidden');
-                        
-                        // Clear existing markers
-                        this.state.markers = [];
-                        this.state.saveToHistory();
-                        this.markerManager.updateMarkerList();
-                        
-                        // Re-render after image loads
-                        setTimeout(() => {
-                            this.markerManager.renderAllMarkers();
-                        }, 100);
-                        
-                        resolve();
+    filterMarkers(searchTerm) {
+        const items = document.querySelectorAll('.marker-item');
+        let visibleCount = 0;
+        
+        items.forEach(item => {
+            const title = item.querySelector('.marker-item-title').textContent.toLowerCase();
+            const type = item.querySelector('.marker-item-type').textContent.toLowerCase();
+            const description = item.querySelector('.marker-item-description').textContent.toLowerCase();
+            
+            if (title.includes(searchTerm) || type.includes(searchTerm) || description.includes(searchTerm)) {
+                item.style.display = 'flex';
+                visibleCount++;
+            } else {
+                item.style.display = 'none';
+            }
+        });
+        
+        if (visibleCount === 0 && searchTerm) {
+            document.getElementById('markerList').innerHTML = '<div class="empty-state">No markers found</div>';
+        }
+    }
+}
+
+class ImageManager {
+    constructor(state, markerManager) {
+        this.state = state;
+        this.markerManager = markerManager;
+        this.isMouseOverImage = false;
+    }
+
+    async loadImage(file) {
+        return new Promise((resolve, reject) => {
+            if (!file.type.startsWith('image/')) {
+                reject('Please upload a valid image file');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    this.state.currentImage = {
+                        src: e.target.result,
+                        width: img.width,
+                        height: img.height,
+                        name: file.name
                     };
-                    img.onerror = () => reject('Error loading image');
-                    img.src = e.target.result;
-                };
-                reader.onerror = () => reject('Error reading file');
-                reader.readAsDataURL(file);
-            });
-        }
-
-        setupImageEvents() {
-            const imageContainer = document.getElementById('imageContainer');
-            
-            imageContainer.addEventListener('click', (e) => this.handleImageClick(e));
-            imageContainer.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-            imageContainer.addEventListener('mouseenter', () => this.isMouseOverImage = true);
-            imageContainer.addEventListener('mouseleave', () => {
-                this.isMouseOverImage = false;
-                this.removePreviewMarker();
-            });
-            
-            // Handle window resize
-            let resizeTimer;
-            window.addEventListener('resize', () => {
-                clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(() => {
-                    if (this.state.currentImage) {
+                    
+                    document.getElementById('imageDisplay').src = e.target.result;
+                    document.getElementById('imageDisplay').style.display = 'block';
+                    document.getElementById('emptyState').style.display = 'none';
+                    document.getElementById('currentImageName').textContent = file.name;
+                    document.getElementById('imageInfo').classList.remove('hidden');
+                    
+                    this.state.markers = [];
+                    this.state.saveToHistory();
+                    this.markerManager.updateMarkerList();
+                    
+                    setTimeout(() => {
                         this.markerManager.renderAllMarkers();
-                    }
-                }, 250);
-            });
-        }
+                    }, 100);
+                    
+                    resolve();
+                };
+                img.onerror = () => reject('Error loading image');
+                img.src = e.target.result;
+            };
+            reader.onerror = () => reject('Error reading file');
+            reader.readAsDataURL(file);
+        });
+    }
 
-        handleImageClick(e) {
-            if (!this.state.currentImage) {
-                alert('Please upload an image first!');
-                return;
-            }
-            
-            // Don't add marker if clicking on existing marker or popup
-            if (e.target.classList.contains('marker') || 
-                e.target.closest('.marker') ||
-                e.target.closest('.marker-popup')) {
-                return;
-            }
-            
+    setupImageEvents() {
+        const imageContainer = document.getElementById('imageContainer');
+        
+        imageContainer.addEventListener('click', (e) => this.handleImageClick(e));
+        imageContainer.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        imageContainer.addEventListener('mouseenter', () => this.isMouseOverImage = true);
+        imageContainer.addEventListener('mouseleave', () => {
+            this.isMouseOverImage = false;
             this.removePreviewMarker();
+        });
+        
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                if (this.state.currentImage) {
+                    this.markerManager.renderAllMarkers();
+                }
+            }, 250);
+        });
+    }
+
+    handleImageClick(e) {
+        if (!this.state.currentImage) {
+            alert('Please upload an image first!');
+            return;
+        }
+        
+        // Don't add marker if clicking on existing marker, popup, or during drag
+        if (e.target.classList.contains('marker') || 
+            e.target.closest('.marker') ||
+            e.target.closest('.marker-popup') ||
+            this.state.draggingMarker) {
+            return;
+        }
+        
+        this.removePreviewMarker();
+        
+        const container = document.getElementById('imageContainer');
+        const img = document.getElementById('imageDisplay');
+        
+        const containerRect = container.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        
+        const clickX = e.clientX - containerRect.left;
+        const clickY = e.clientY - containerRect.top;
+        
+        const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+        const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+        
+        const imageRelativeX = clickX - imageOffsetX;
+        const imageRelativeY = clickY - imageOffsetY;
+        
+        if (imageRelativeX < 0 || imageRelativeX > imgRect.width || 
+            imageRelativeY < 0 || imageRelativeY > imgRect.height) {
+            return;
+        }
+        
+        const percentX = (imageRelativeX / imgRect.width) * 100;
+        const percentY = (imageRelativeY / imgRect.height) * 100;
+        
+        const marker = {
+            id: Date.now() + Math.random(),
+            type: this.state.currentMarkerType,
+            x: percentX,
+            y: percentY,
+            title: `New ${this.state.currentMarkerType.charAt(0).toUpperCase() + this.state.currentMarkerType.slice(1)} Marker`,
+            description: '',
+            link: '',
+            video: '',
+            audio: ''
+        };
+        
+        this.state.addMarker(marker);
+        this.markerManager.renderAllMarkers();
+        this.markerManager.updateMarkerList();
+        this.markerManager.selectMarker(marker.id);
+        this.markerManager.populateFormWithMarker(marker);
+        this.markerManager.showMarkerPopup(marker);
+    }
+
+    handleMouseMove(e) {
+        // Don't show preview marker during drag
+        if (this.state.draggingMarker) return;
+        
+        if (!this.state.currentImage || !this.isMouseOverImage) return;
+        
+        this.removePreviewMarker();
+        
+        const container = document.getElementById('imageContainer');
+        const img = document.getElementById('imageDisplay');
+        
+        const containerRect = container.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        
+        const mouseX = e.clientX - containerRect.left;
+        const mouseY = e.clientY - containerRect.top;
+        
+        const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+        const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+        
+        const imageRelativeX = mouseX - imageOffsetX;
+        const imageRelativeY = mouseY - imageOffsetY;
+        
+        if (imageRelativeX >= 0 && imageRelativeX <= imgRect.width && 
+            imageRelativeY >= 0 && imageRelativeY <= imgRect.height) {
             
-            const container = document.getElementById('imageContainer');
-            const img = document.getElementById('imageDisplay');
-            
-            const containerRect = container.getBoundingClientRect();
-            const imgRect = img.getBoundingClientRect();
-            
-            // Calculate click position relative to CONTAINER
-            const clickX = e.clientX - containerRect.left;
-            const clickY = e.clientY - containerRect.top;
-            
-            // Calculate where the image starts within the container
-            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
-            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
-            
-            // Adjust click position to be relative to image within container
-            const imageRelativeX = clickX - imageOffsetX;
-            const imageRelativeY = clickY - imageOffsetY;
-            
-            // Check if click is within image bounds
-            if (imageRelativeX < 0 || imageRelativeX > imgRect.width || 
-                imageRelativeY < 0 || imageRelativeY > imgRect.height) {
-                return;
-            }
-            
-            // Convert to percentage coordinates relative to image
             const percentX = (imageRelativeX / imgRect.width) * 100;
             const percentY = (imageRelativeY / imgRect.height) * 100;
             
-            // Create new marker
-            const marker = {
-                id: Date.now() + Math.random(),
-                type: this.state.currentMarkerType,
-                x: percentX,
-                y: percentY,
-                title: `New ${this.state.currentMarkerType.charAt(0).toUpperCase() + this.state.currentMarkerType.slice(1)} Marker`,
-                description: '',
-                link: '',
-                video: '',
-                audio: ''
-            };
-            
-            this.state.addMarker(marker);
-            this.markerManager.renderAllMarkers();
-            this.markerManager.updateMarkerList();
-            this.markerManager.selectMarker(marker.id);
-            this.markerManager.populateFormWithMarker(marker);
-            this.markerManager.showMarkerPopup(marker);
-        }
-
-        handleMouseMove(e) {
-            if (!this.state.currentImage || !this.isMouseOverImage) return;
-            
-            this.removePreviewMarker();
-            
-            const container = document.getElementById('imageContainer');
-            const img = document.getElementById('imageDisplay');
-            
-            const containerRect = container.getBoundingClientRect();
-            const imgRect = img.getBoundingClientRect();
-            
-            // Calculate mouse position relative to CONTAINER
-            const mouseX = e.clientX - containerRect.left;
-            const mouseY = e.clientY - containerRect.top;
-            
-            // Calculate where the image starts within the container
-            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
-            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
-            
-            // Adjust mouse position to be relative to image within container
-            const imageRelativeX = mouseX - imageOffsetX;
-            const imageRelativeY = mouseY - imageOffsetY;
-            
-            // Only show preview if mouse is over the image
-            if (imageRelativeX >= 0 && imageRelativeX <= imgRect.width && 
-                imageRelativeY >= 0 && imageRelativeY <= imgRect.height) {
-                
-                // Calculate percentage position for preview
-                const percentX = (imageRelativeX / imgRect.width) * 100;
-                const percentY = (imageRelativeY / imgRect.height) * 100;
-                
-                this.showPreviewMarker(percentX, percentY);
-            }
-        }
-
-        showPreviewMarker(percentX, percentY) {
-            const container = document.getElementById('imageContainer');
-            const img = document.getElementById('imageDisplay');
-            const containerRect = container.getBoundingClientRect();
-            const imgRect = img.getBoundingClientRect();
-            
-            // Calculate where the image starts within the container
-            const imageOffsetX = (containerRect.width - imgRect.width) / 2;
-            const imageOffsetY = (containerRect.height - imgRect.height) / 2;
-            
-            // Calculate marker position in pixels relative to container
-            const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
-            const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
-            
-            this.state.previewMarker = document.createElement('div');
-            this.state.previewMarker.className = `marker preview ${this.state.currentMarkerType}`;
-            this.state.previewMarker.style.left = `${markerX}px`;
-            this.state.previewMarker.style.top = `${markerY}px`;
-            this.state.previewMarker.innerHTML = 
-                `<i class="fas fa-${this.markerManager.markerThemes[this.state.currentMarkerType].icon}"></i>`;
-            
-            document.getElementById('imageContainer').appendChild(this.state.previewMarker);
-        }
-
-        removePreviewMarker() {
-            if (this.state.previewMarker) {
-                this.state.previewMarker.remove();
-                this.state.previewMarker = null;
-            }
+            this.showPreviewMarker(percentX, percentY);
         }
     }
 
-    // ====================== EXPORT MANAGER ======================
-    class ExportManager {
-        constructor(state, markerManager) {
-            this.state = state;
-            this.markerManager = markerManager;
-        }
+    showPreviewMarker(percentX, percentY) {
+        const container = document.getElementById('imageContainer');
+        const img = document.getElementById('imageDisplay');
+        const containerRect = container.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        
+        const imageOffsetX = (containerRect.width - imgRect.width) / 2;
+        const imageOffsetY = (containerRect.height - imgRect.height) / 2;
+        
+        const markerX = imageOffsetX + (percentX / 100) * imgRect.width;
+        const markerY = imageOffsetY + (percentY / 100) * imgRect.height;
+        
+        this.state.previewMarker = document.createElement('div');
+        this.state.previewMarker.className = `marker preview ${this.state.currentMarkerType}`;
+        this.state.previewMarker.style.left = `${markerX}px`;
+        this.state.previewMarker.style.top = `${markerY}px`;
+        this.state.previewMarker.innerHTML = 
+            `<i class="fas fa-${this.markerManager.markerThemes[this.state.currentMarkerType].icon}"></i>`;
+        
+        document.getElementById('imageContainer').appendChild(this.state.previewMarker);
+    }
 
-        generateExportHTML(projectName, options = {}) {
-            const { responsive = true, smartPositioning = true } = options;
-            
-            const markersData = JSON.stringify(this.state.markers.map(marker => ({
-                id: marker.id,
-                type: marker.type,
-                x: marker.x,
-                y: marker.y,
-                title: marker.title,
-                description: marker.description,
-                link: marker.link,
-                video: marker.video,
-                audio: marker.audio
-            })));
-            
-            return `<!DOCTYPE html>
+    removePreviewMarker() {
+        if (this.state.previewMarker) {
+            this.state.previewMarker.remove();
+            this.state.previewMarker = null;
+        }
+    }
+}
+
+class ExportManager {
+    constructor(state, markerManager) {
+        this.state = state;
+        this.markerManager = markerManager;
+    }
+
+    generateExportHTML(projectName, options = {}) {
+        const { responsive = true, smartPositioning = true } = options;
+        
+        const markersData = JSON.stringify(this.state.markers.map(marker => ({
+            id: marker.id,
+            type: marker.type,
+            x: marker.x,
+            y: marker.y,
+            title: marker.title,
+            description: marker.description,
+            link: marker.link,
+            video: marker.video,
+            audio: marker.audio
+        })));
+        
+        return `<!DOCTYPE html>
 <html>
 <head>
     <title>${projectName}</title>
@@ -1569,7 +1707,6 @@ Side-panel marker cards and buttons now worknow work. Markers are selectable and
                 const m = document.createElement('div');
                 m.className = 'marker ' + marker.type;
                 
-                // Convert percentage to pixels
                 const x = (marker.x / 100) * imgRect.width;
                 const y = (marker.y / 100) * imgRect.height;
                 
@@ -1626,409 +1763,404 @@ Side-panel marker cards and buttons now worknow work. Markers are selectable and
     <\/script>
 </body>
 </html>`;
-        }
+    }
+}
+
+class Application {
+    constructor() {
+        this.state = new AppState();
+        this.markerManager = new MarkerManager(this.state);
+        this.imageManager = new ImageManager(this.state, this.markerManager);
+        this.exportManager = new ExportManager(this.state, this.markerManager);
+        
+        this.initialize();
     }
 
-    // ====================== MAIN APPLICATION ======================
-    class Application {
-        constructor() {
-            this.state = new AppState();
-            this.markerManager = new MarkerManager(this.state);
-            this.imageManager = new ImageManager(this.state, this.markerManager);
-            this.exportManager = new ExportManager(this.state, this.markerManager);
-            
-            this.initialize();
-        }
+    initialize() {
+        this.setupEventListeners();
+        this.setupKeyboardShortcuts();
+        this.state.saveToHistory();
+    }
 
-        initialize() {
-            this.setupEventListeners();
-            this.setupKeyboardShortcuts();
-            this.state.saveToHistory(); // Initial state
-        }
+    setupEventListeners() {
+        // File upload
+        document.getElementById('uploadArea').addEventListener('click', () => {
+            document.getElementById('imageUpload').click();
+        });
 
-        setupEventListeners() {
-            // File upload
-            document.getElementById('uploadArea').addEventListener('click', () => {
-                document.getElementById('imageUpload').click();
-            });
-
-            document.getElementById('imageUpload').addEventListener('change', async (e) => {
-                if (e.target.files[0]) {
-                    try {
-                        const originalHTML = document.getElementById('uploadArea').innerHTML;
-                        document.getElementById('uploadArea').innerHTML = 
-                            '<i class="fas fa-spinner fa-spin"></i><p>Loading image...</p>';
-                        
-                        await this.imageManager.loadImage(e.target.files[0]);
-                        document.getElementById('uploadArea').innerHTML = originalHTML;
-                    } catch (error) {
-                        alert(error);
-                        document.getElementById('uploadArea').innerHTML = originalHTML;
-                    }
+        document.getElementById('imageUpload').addEventListener('change', async (e) => {
+            if (e.target.files[0]) {
+                try {
+                    const originalHTML = document.getElementById('uploadArea').innerHTML;
+                    document.getElementById('uploadArea').innerHTML = 
+                        '<i class="fas fa-spinner fa-spin"></i><p>Loading image...</p>';
+                    
+                    await this.imageManager.loadImage(e.target.files[0]);
+                    document.getElementById('uploadArea').innerHTML = originalHTML;
+                } catch (error) {
+                    alert(error);
+                    document.getElementById('uploadArea').innerHTML = originalHTML;
                 }
-            });
+            }
+        });
 
-            // Drag and drop
-            const uploadArea = document.getElementById('uploadArea');
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.classList.add('dragover');
-            });
+        // Drag and drop for file upload
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
 
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.classList.remove('dragover');
-            });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
 
-            uploadArea.addEventListener('drop', async (e) => {
-                e.preventDefault();
-                uploadArea.classList.remove('dragover');
-                if (e.dataTransfer.files[0]) {
-                    try {
-                        await this.imageManager.loadImage(e.dataTransfer.files[0]);
-                    } catch (error) {
-                        alert(error);
-                    }
+        uploadArea.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            if (e.dataTransfer.files[0]) {
+                try {
+                    await this.imageManager.loadImage(e.dataTransfer.files[0]);
+                } catch (error) {
+                    alert(error);
                 }
-            });
-
-            // Marker type selection
-            document.querySelectorAll('.marker-type').forEach(type => {
-                type.addEventListener('click', () => {
-                    document.querySelectorAll('.marker-type').forEach(t => t.classList.remove('selected'));
-                    type.classList.add('selected');
-                    this.state.currentMarkerType = type.dataset.type;
-                    this.markerManager.updateFieldsVisibility();
-                });
-            });
-
-            // Form buttons
-            document.getElementById('saveMarker').addEventListener('click', () => this.saveMarker());
-            document.getElementById('deleteMarker').addEventListener('click', () => this.deleteMarker());
-            document.getElementById('clearForm').addEventListener('click', () => this.markerManager.resetForm());
-            document.getElementById('clearMarkers').addEventListener('click', () => this.clearAllMarkers());
-            document.getElementById('closePopup').addEventListener('click', () => {
-                document.getElementById('markerPopup').style.display = 'none';
-            });
-
-            // Search
-            document.getElementById('markerSearch').addEventListener('input', (e) => {
-                this.markerManager.filterMarkers(e.target.value.toLowerCase());
-            });
-
-            // History controls
-            document.getElementById('undoBtn').addEventListener('click', () => {
-                if (this.state.undo()) {
-                    this.markerManager.renderAllMarkers();
-                    this.markerManager.updateMarkerList();
-                    this.markerManager.resetForm();
-                }
-            });
-
-            document.getElementById('redoBtn').addEventListener('click', () => {
-                if (this.state.redo()) {
-                    this.markerManager.renderAllMarkers();
-                    this.markerManager.updateMarkerList();
-                    this.markerManager.resetForm();
-                }
-            });
-
-            // Project controls
-            document.getElementById('saveProjectBtn').addEventListener('click', () => this.saveProject());
-            document.getElementById('loadProjectBtn').addEventListener('click', () => this.loadProject());
-            document.getElementById('exportBtn').addEventListener('click', () => this.exportProject());
-
-            // Export modal
-            document.getElementById('copyCodeBtn').addEventListener('click', () => this.copyExportCode());
-            document.getElementById('downloadBtn').addEventListener('click', () => this.downloadExportFile());
-            document.getElementById('closeExportBtn').addEventListener('click', () => {
-                document.getElementById('exportModal').classList.add('hidden');
-            });
-
-            // Setup image events
-            this.imageManager.setupImageEvents();
-        }
-
-        setupKeyboardShortcuts() {
-            document.addEventListener('keydown', (e) => {
-                if (e.ctrlKey || e.metaKey) {
-                    switch(e.key.toLowerCase()) {
-                        case 's':
-                            e.preventDefault();
-                            this.saveProject();
-                            break;
-                        case 'o':
-                            e.preventDefault();
-                            this.loadProject();
-                            break;
-                        case 'e':
-                            e.preventDefault();
-                            this.exportProject();
-                            break;
-                        case 'z':
-                            e.preventDefault();
-                            this.undo();
-                            break;
-                        case 'y':
-                            e.preventDefault();
-                            this.redo();
-                            break;
-                    }
-                }
-                
-                if (e.key === 'Delete' && this.state.selectedMarkerId) {
-                    this.deleteMarker();
-                }
-                
-                if (e.key === 'Escape') {
-                    document.getElementById('markerPopup').style.display = 'none';
-                    this.markerManager.resetForm();
-                }
-            });
-        }
-
-        saveMarker() {
-            if (!this.state.selectedMarkerId) {
-                alert('Please select a marker to edit, or click on the image to add a new marker.');
-                return;
             }
+        });
 
-            const marker = this.state.getMarker(this.state.selectedMarkerId);
-            if (!marker) return;
-
-            const title = document.getElementById('markerTitle').value.trim();
-            const description = document.getElementById('markerDescription').value.trim();
-            const link = document.getElementById('markerLink').value.trim();
-            const video = document.getElementById('markerVideo').value.trim();
-            const audio = document.getElementById('markerAudio').value.trim();
-
-            if (!title) {
-                alert('Marker title is required');
-                return;
-            }
-
-            // Validate URLs if provided
-            if (link && !this.isValidUrl(link)) {
-                alert('Please enter a valid URL for the link');
-                return;
-            }
-            if (video && !this.isValidUrl(video)) {
-                alert('Please enter a valid URL for the video');
-                return;
-            }
-            if (audio && !this.isValidUrl(audio)) {
-                alert('Please enter a valid URL for the audio');
-                return;
-            }
-
-            const updatedMarker = this.state.updateMarker(marker.id, {
-                title,
-                description,
-                link,
-                video,
-                audio,
-                type: this.state.currentMarkerType
+        // Marker type selection
+        document.querySelectorAll('.marker-type').forEach(type => {
+            type.addEventListener('click', () => {
+                document.querySelectorAll('.marker-type').forEach(t => t.classList.remove('selected'));
+                type.classList.add('selected');
+                this.state.currentMarkerType = type.dataset.type;
+                this.markerManager.updateFieldsVisibility();
             });
+        });
 
-            if (updatedMarker) {
-                this.markerManager.renderAllMarkers();
-                this.markerManager.updateMarkerList();
-                this.markerManager.selectMarker(marker.id);
-                
-                // Update popup if open
-                if (document.getElementById('markerPopup').style.display === 'block') {
-                    this.markerManager.showMarkerPopup(updatedMarker);
-                }
-                
-                // Clear the form after saving
-                this.markerManager.resetForm();
-                alert('Marker updated!');
-            }
-        }
+        // Form buttons
+        document.getElementById('saveMarker').addEventListener('click', () => this.saveMarker());
+        document.getElementById('deleteMarker').addEventListener('click', () => this.deleteMarker());
+        document.getElementById('clearForm').addEventListener('click', () => this.markerManager.resetForm());
+        document.getElementById('clearMarkers').addEventListener('click', () => this.clearAllMarkers());
+        document.getElementById('closePopup').addEventListener('click', () => {
+            document.getElementById('markerPopup').style.display = 'none';
+        });
 
-        deleteMarker() {
-            if (this.state.selectedMarkerId && confirm('Delete this marker?')) {
-                this.state.deleteMarker(this.state.selectedMarkerId);
-                this.markerManager.renderAllMarkers();
-                this.markerManager.updateMarkerList();
-                document.getElementById('markerPopup').style.display = 'none';
-                this.markerManager.resetForm();
-            }
-        }
+        // Search
+        document.getElementById('markerSearch').addEventListener('input', (e) => {
+            this.markerManager.filterMarkers(e.target.value.toLowerCase());
+        });
 
-        clearAllMarkers() {
-            if (this.state.markers.length === 0) return;
-            
-            if (confirm('Clear all markers? This cannot be undone.')) {
-                this.state.clearMarkers();
-                this.markerManager.renderAllMarkers();
-                this.markerManager.updateMarkerList();
-                document.getElementById('markerPopup').style.display = 'none';
-                this.markerManager.resetForm();
-            }
-        }
-
-        undo() {
+        // History controls
+        document.getElementById('undoBtn').addEventListener('click', () => {
             if (this.state.undo()) {
                 this.markerManager.renderAllMarkers();
                 this.markerManager.updateMarkerList();
                 this.markerManager.resetForm();
-                return true;
             }
-            return false;
-        }
+        });
 
-        redo() {
+        document.getElementById('redoBtn').addEventListener('click', () => {
             if (this.state.redo()) {
                 this.markerManager.renderAllMarkers();
                 this.markerManager.updateMarkerList();
                 this.markerManager.resetForm();
-                return true;
             }
-            return false;
-        }
+        });
 
-        isValidUrl(string) {
-            try {
-                new URL(string);
-                return true;
-            } catch (_) {
-                return false;
-            }
-        }
+        // Project controls
+        document.getElementById('saveProjectBtn').addEventListener('click', () => this.saveProject());
+        document.getElementById('loadProjectBtn').addEventListener('click', () => this.loadProject());
+        document.getElementById('exportBtn').addEventListener('click', () => this.exportProject());
 
-        saveProject() {
-            if (!this.state.currentImage) {
-                alert('Please upload an image first');
-                return;
-            }
+        // Export modal
+        document.getElementById('copyCodeBtn').addEventListener('click', () => this.copyExportCode());
+        document.getElementById('downloadBtn').addEventListener('click', () => this.downloadExportFile());
+        document.getElementById('closeExportBtn').addEventListener('click', () => {
+            document.getElementById('exportModal').classList.add('hidden');
+        });
 
-            const projectName = prompt('Project name:', 
-                this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Project');
-            if (!projectName) return;
+        // Setup image events
+        this.imageManager.setupImageEvents();
+    }
 
-            const project = {
-                name: projectName,
-                image: this.state.currentImage,
-                markers: this.state.markers,
-                date: new Date().toISOString()
-            };
-
-            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
-            projects.push(project);
-            localStorage.setItem('projects', JSON.stringify(projects));
-            alert(`Project "${projectName}" saved!`);
-        }
-
-        loadProject() {
-            const projects = JSON.parse(localStorage.getItem('projects') || '[]');
-            if (projects.length === 0) {
-                alert('No saved projects found');
-                return;
-            }
-
-            const projectNames = projects.map((p, i) => 
-                `${i + 1}. ${p.name} (${new Date(p.date).toLocaleDateString()})`
-            ).join('\n');
-
-            const selection = prompt(`Available projects:\n\n${projectNames}\n\nEnter project number or name:`);
-            let project = null;
-
-            if (selection) {
-                const index = parseInt(selection) - 1;
-                if (!isNaN(index) && index >= 0 && index < projects.length) {
-                    project = projects[index];
-                } else {
-                    project = projects.find(p => 
-                        p.name.toLowerCase().includes(selection.toLowerCase()));
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key.toLowerCase()) {
+                    case 's':
+                        e.preventDefault();
+                        this.saveProject();
+                        break;
+                    case 'o':
+                        e.preventDefault();
+                        this.loadProject();
+                        break;
+                    case 'e':
+                        e.preventDefault();
+                        this.exportProject();
+                        break;
+                    case 'z':
+                        e.preventDefault();
+                        this.undo();
+                        break;
+                    case 'y':
+                        e.preventDefault();
+                        this.redo();
+                        break;
                 }
             }
-
-            if (project) {
-                this.state.currentImage = project.image;
-                this.state.markers = project.markers || [];
-                
-                document.getElementById('imageDisplay').src = project.image.src;
-                document.getElementById('imageDisplay').style.display = 'block';
-                document.getElementById('emptyState').style.display = 'none';
-                document.getElementById('currentImageName').textContent = project.name;
-                document.getElementById('imageInfo').classList.remove('hidden');
-                
-                setTimeout(() => {
-                    this.markerManager.renderAllMarkers();
-                    this.markerManager.updateMarkerList();
-                    this.markerManager.resetForm();
-                    this.state.saveToHistory();
-                    alert(`Project "${project.name}" loaded!`);
-                }, 100);
-            } else {
-                alert('Project not found');
+            
+            if (e.key === 'Delete' && this.state.selectedMarkerId) {
+                this.deleteMarker();
             }
+            
+            if (e.key === 'Escape') {
+                document.getElementById('markerPopup').style.display = 'none';
+                this.markerManager.resetForm();
+            }
+        });
+    }
+
+    saveMarker() {
+        if (!this.state.selectedMarkerId) {
+            alert('Please select a marker to edit, or click on the image to add a new marker.');
+            return;
         }
 
-        exportProject() {
-            if (!this.state.currentImage || this.state.markers.length === 0) {
-                alert('Please create a project with markers first');
-                return;
-            }
+        const marker = this.state.getMarker(this.state.selectedMarkerId);
+        if (!marker) return;
 
-            const projectName = prompt('Project name for export:', 
-                this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Interactive Image');
-            if (!projectName) return;
+        const title = document.getElementById('markerTitle').value.trim();
+        const description = document.getElementById('markerDescription').value.trim();
+        const link = document.getElementById('markerLink').value.trim();
+        const video = document.getElementById('markerVideo').value.trim();
+        const audio = document.getElementById('markerAudio').value.trim();
 
-            const responsive = confirm('Enable responsive design for mobile devices?');
-            const smartPositioning = confirm('Use smart popup positioning (avoid off-screen popups)?');
-            
-            const html = this.exportManager.generateExportHTML(projectName, { 
-                responsive, 
-                smartPositioning 
-            });
-            
-            document.getElementById('exportCode').value = html;
-            document.getElementById('exportModal').classList.remove('hidden');
+        if (!title) {
+            alert('Marker title is required');
+            return;
         }
 
-        copyExportCode() {
-            const exportCode = document.getElementById('exportCode');
-            exportCode.select();
-            exportCode.setSelectionRange(0, 99999);
-            
-            try {
-                navigator.clipboard.writeText(exportCode.value).then(() => {
-                    alert('Code copied to clipboard! Save it as an HTML file.');
-                });
-            } catch (err) {
-                // Fallback for older browsers
-                try {
-                    document.execCommand('copy');
-                    alert('Code copied to clipboard! Save it as an HTML file.');
-                } catch (err) {
-                    alert('Failed to copy code. Please select and copy manually.');
-                }
-            }
+        if (link && !this.isValidUrl(link)) {
+            alert('Please enter a valid URL for the link');
+            return;
+        }
+        if (video && !this.isValidUrl(video)) {
+            alert('Please enter a valid URL for the video');
+            return;
+        }
+        if (audio && !this.isValidUrl(audio)) {
+            alert('Please enter a valid URL for the audio');
+            return;
         }
 
-        downloadExportFile() {
-            const exportCode = document.getElementById('exportCode').value;
-            const blob = new Blob([exportCode], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
+        const updatedMarker = this.state.updateMarker(marker.id, {
+            title,
+            description,
+            link,
+            video,
+            audio,
+            type: this.state.currentMarkerType
+        });
+
+        if (updatedMarker) {
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            this.markerManager.selectMarker(marker.id);
             
-            const projectName = prompt('Enter filename:', 
-                this.state.currentImage?.name.replace(/\.[^/.]+$/, "") || 'interactive-image') || 'interactive-image';
-            a.download = `${projectName}.html`;
+            if (document.getElementById('markerPopup').style.display === 'block') {
+                this.markerManager.showMarkerPopup(updatedMarker);
+            }
             
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            this.markerManager.resetForm();
+            alert('Marker updated!');
         }
     }
 
-    // ====================== START APPLICATION ======================
-    document.addEventListener('DOMContentLoaded', () => {
-        window.app = new Application();
-    });
+    deleteMarker() {
+        if (this.state.selectedMarkerId && confirm('Delete this marker?')) {
+            this.state.deleteMarker(this.state.selectedMarkerId);
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            document.getElementById('markerPopup').style.display = 'none';
+            this.markerManager.resetForm();
+        }
+    }
+
+    clearAllMarkers() {
+        if (this.state.markers.length === 0) return;
+        
+        if (confirm('Clear all markers? This cannot be undone.')) {
+            this.state.clearMarkers();
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            document.getElementById('markerPopup').style.display = 'none';
+            this.markerManager.resetForm();
+        }
+    }
+
+    undo() {
+        if (this.state.undo()) {
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            this.markerManager.resetForm();
+            return true;
+        }
+        return false;
+    }
+
+    redo() {
+        if (this.state.redo()) {
+            this.markerManager.renderAllMarkers();
+            this.markerManager.updateMarkerList();
+            this.markerManager.resetForm();
+            return true;
+        }
+        return false;
+    }
+
+    isValidUrl(string) {
+        try {
+            new URL(string);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    saveProject() {
+        if (!this.state.currentImage) {
+            alert('Please upload an image first');
+            return;
+        }
+
+        const projectName = prompt('Project name:', 
+            this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Project');
+        if (!projectName) return;
+
+        const project = {
+            name: projectName,
+            image: this.state.currentImage,
+            markers: this.state.markers,
+            date: new Date().toISOString()
+        };
+
+        const projects = JSON.parse(localStorage.getItem('projects') || '[]');
+        projects.push(project);
+        localStorage.setItem('projects', JSON.stringify(projects));
+        alert(`Project "${projectName}" saved!`);
+    }
+
+    loadProject() {
+        const projects = JSON.parse(localStorage.getItem('projects') || '[]');
+        if (projects.length === 0) {
+            alert('No saved projects found');
+            return;
+        }
+
+        const projectNames = projects.map((p, i) => 
+            `${i + 1}. ${p.name} (${new Date(p.date).toLocaleDateString()})`
+        ).join('\n');
+
+        const selection = prompt(`Available projects:\n\n${projectNames}\n\nEnter project number or name:`);
+        let project = null;
+
+        if (selection) {
+            const index = parseInt(selection) - 1;
+            if (!isNaN(index) && index >= 0 && index < projects.length) {
+                project = projects[index];
+            } else {
+                project = projects.find(p => 
+                    p.name.toLowerCase().includes(selection.toLowerCase()));
+            }
+        }
+
+        if (project) {
+            this.state.currentImage = project.image;
+            this.state.markers = project.markers || [];
+            
+            document.getElementById('imageDisplay').src = project.image.src;
+            document.getElementById('imageDisplay').style.display = 'block';
+            document.getElementById('emptyState').style.display = 'none';
+            document.getElementById('currentImageName').textContent = project.name;
+            document.getElementById('imageInfo').classList.remove('hidden');
+            
+            setTimeout(() => {
+                this.markerManager.renderAllMarkers();
+                this.markerManager.updateMarkerList();
+                this.markerManager.resetForm();
+                this.state.saveToHistory();
+                alert(`Project "${project.name}" loaded!`);
+            }, 100);
+        } else {
+            alert('Project not found');
+        }
+    }
+
+    exportProject() {
+        if (!this.state.currentImage || this.state.markers.length === 0) {
+            alert('Please create a project with markers first');
+            return;
+        }
+
+        const projectName = prompt('Project name for export:', 
+            this.state.currentImage.name.replace(/\.[^/.]+$/, "") || 'Interactive Image');
+        if (!projectName) return;
+
+        const responsive = confirm('Enable responsive design for mobile devices?');
+        const smartPositioning = confirm('Use smart popup positioning (avoid off-screen popups)?');
+        
+        const html = this.exportManager.generateExportHTML(projectName, { 
+            responsive, 
+            smartPositioning 
+        });
+        
+        document.getElementById('exportCode').value = html;
+        document.getElementById('exportModal').classList.remove('hidden');
+    }
+
+    copyExportCode() {
+        const exportCode = document.getElementById('exportCode');
+        exportCode.select();
+        exportCode.setSelectionRange(0, 99999);
+        
+        try {
+            navigator.clipboard.writeText(exportCode.value).then(() => {
+                alert('Code copied to clipboard! Save it as an HTML file.');
+            });
+        } catch (err) {
+            try {
+                document.execCommand('copy');
+                alert('Code copied to clipboard! Save it as an HTML file.');
+            } catch (err) {
+                alert('Failed to copy code. Please select and copy manually.');
+            }
+        }
+    }
+
+    downloadExportFile() {
+        const exportCode = document.getElementById('exportCode').value;
+        const blob = new Blob([exportCode], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        
+        const projectName = prompt('Enter filename:', 
+            this.state.currentImage?.name.replace(/\.[^/.]+$/, "") || 'interactive-image') || 'interactive-image';
+        a.download = `${projectName}.html`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+}
+
+// ====================== START APPLICATION ======================
+document.addEventListener('DOMContentLoaded', () => {
+    window.app = new Application();
+});
 </script>
 </body>
 </html>
