@@ -1,7 +1,5 @@
-<!-- NOTES:
-THIS VERSION WORKS
-Marker coordinates have been corrected. Markers can be selected in the image and edited in the main side panel. Undo and redo buttons now work. Markers display (and in correct locations) in the exported file.
-FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by using the main panel and selecting markers within the image). -->
+<-- FIXES:
+Side-panel marker cards and buttons now worknow work. Markers are selectable and editable/deletable from the cards and from the main image. Markers appear in the correct location and export correctly. -->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -685,7 +683,23 @@ FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by us
         }
 
         getMarker(id) {
-            return this.markers.find(m => m.id === id);
+            // First try exact match
+            let marker = this.markers.find(m => m.id === id);
+            
+            // If not found and id is a string, try converting to number
+            if (!marker && typeof id === 'string') {
+                const numericId = parseFloat(id);
+                if (!isNaN(numericId)) {
+                    marker = this.markers.find(m => m.id === numericId);
+                }
+            }
+            
+            // If not found and id is a number, try converting to string
+            if (!marker && typeof id === 'number') {
+                marker = this.markers.find(m => String(m.id) === String(id));
+            }
+            
+            return marker;
         }
 
         saveToHistory() {
@@ -747,49 +761,60 @@ FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by us
                 warning: { color: '#f8961e', icon: 'exclamation-triangle' },
                 question: { color: '#2a9d8f', icon: 'question-circle' }
             };
-            this.setupGlobalEventDelegation();
+            this.setupEventListeners();
         }
 
-        setupGlobalEventDelegation() {
-            // Set up event delegation for marker cards
-            document.addEventListener('click', (e) => {
-                // Check if click is inside marker list
-                const markerList = document.getElementById('markerList');
-                if (!markerList.contains(e.target) && !e.target.closest('.marker-item')) return;
-                
-                // Find the closest marker item
-                const markerItem = e.target.closest('.marker-item');
-                if (!markerItem) return;
-                
-                const markerId = markerItem.dataset.id;
-                const marker = this.state.getMarker(markerId);
-                if (!marker) return;
-                
-                // Check which element was clicked
-                if (e.target.classList.contains('edit') || e.target.closest('.edit')) {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    this.selectMarker(markerId);
-                    this.populateFormWithMarker(marker);
-                } 
-                else if (e.target.classList.contains('delete') || e.target.closest('.delete')) {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    if (confirm('Delete this marker?')) {
-                        this.state.deleteMarker(markerId);
-                        this.renderAllMarkers();
-                        this.updateMarkerList();
-                        document.getElementById('markerPopup').style.display = 'none';
-                        document.getElementById('deleteMarker').style.display = 'none';
-                        this.resetForm();
-                    }
-                } 
-                else {
-                    // Clicked on the marker item itself
-                    this.selectMarker(markerId);
-                    this.showMarkerPopup(marker);
-                }
+        setupEventListeners() {
+            // Use event delegation on the marker list container
+            const markerList = document.getElementById('markerList');
+            
+            // Remove any existing event listeners by cloning
+            markerList.replaceWith(markerList.cloneNode(true));
+            
+            // Get the fresh element
+            const freshMarkerList = document.getElementById('markerList');
+            
+            // Add a single event listener that works for all current and future marker items
+            freshMarkerList.addEventListener('click', (e) => {
+                this.handleMarkerCardClick(e);
             });
+        }
+
+        handleMarkerCardClick(e) {
+            // Find the closest marker item
+            const markerItem = e.target.closest('.marker-item');
+            if (!markerItem) return;
+            
+            const markerId = markerItem.dataset.id;
+            const marker = this.state.getMarker(markerId);
+            if (!marker) return;
+            
+            // Check if edit button was clicked
+            if (e.target.classList.contains('edit') || e.target.closest('.edit')) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.selectMarker(marker.id);
+                this.populateFormWithMarker(marker);
+                return;
+            }
+            
+            // Check if delete button was clicked
+            if (e.target.classList.contains('delete') || e.target.closest('.delete')) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (confirm('Delete this marker?')) {
+                    this.state.deleteMarker(marker.id);
+                    this.renderAllMarkers();
+                    this.updateMarkerList();
+                    document.getElementById('markerPopup').style.display = 'none';
+                    this.resetForm();
+                }
+                return;
+            }
+            
+            // Otherwise, clicked on the marker card itself
+            this.selectMarker(marker.id);
+            this.showMarkerPopup(marker);
         }
 
         createMarkerElement(marker) {
@@ -861,7 +886,7 @@ FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by us
             
             // Select the marker
             const markerElement = document.querySelector(`.marker[data-id="${id}"]`);
-            const markerItem = document.querySelector(`.marker-item[data-id="${id}"]`);
+            const markerItem = document.querySelector(`.marker-item[data-id="${String(id)}"]`);
             
             if (markerElement) markerElement.classList.add('selected');
             if (markerItem) markerItem.classList.add('selected');
@@ -1020,7 +1045,7 @@ FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by us
             let html = '';
             this.state.markers.forEach(marker => {
                 html += `
-                    <div class="marker-item" data-id="${marker.id}">
+                    <div class="marker-item" data-id="${String(marker.id)}">
                         <div class="marker-item-header">
                             <div class="marker-item-title">
                                 <i class="fas fa-${this.markerThemes[marker.type].icon}"></i>
@@ -1030,10 +1055,10 @@ FIXED REQUIRED: Marker cards on the left panel do not work (work-around is by us
                         </div>
                         <div class="marker-item-description">${marker.description || 'No description'}</div>
                         <div class="marker-item-actions">
-                            <button class="marker-action-btn edit" data-id="${marker.id}">
+                            <button class="marker-action-btn edit" data-id="${String(marker.id)}">
                                 <i class="fas fa-edit"></i> Edit
                             </button>
-                            <button class="marker-action-btn delete" data-id="${marker.id}">
+                            <button class="marker-action-btn delete" data-id="${String(marker.id)}">
                                 <i class="fas fa-trash"></i> Delete
                             </button>
                         </div>
