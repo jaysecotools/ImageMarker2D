@@ -1,4 +1,4 @@
-<!-- FIXES: Markers can now be dragged to different locations while editing. All other functions remain and the app is fully functional -->
+<!-- Added link displays to info boxes - CORS proxy updates to try and improve displays-->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -1573,11 +1573,30 @@ class ExportManager {
         .video-container { position: relative; width: 100%; height: 0; padding-bottom: 56.25%; margin-top: 10px; }
         .video-container iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 4px; }
         .popup-video, .popup-audio { width: 100%; border-radius: 4px; }
+        
+        /* NEW: Link preview styles */
+        .link-preview { margin-top: 10px; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; background: #fff; }
+        .link-preview a { text-decoration: none; color: inherit; display: block; }
+        .link-preview-image { width: 100%; height: 150px; object-fit: cover; background: linear-gradient(45deg, #f5f5f5, #e0e0e0); }
+        .link-preview-content { padding: 12px; }
+        .link-preview-title { font-weight: bold; margin: 0 0 6px 0; font-size: 14px; color: #333; }
+        .link-preview-description { color: #666; font-size: 12px; margin: 0; line-height: 1.4; }
+        .link-preview-domain { color: #888; font-size: 11px; margin-top: 6px; display: flex; align-items: center; }
+        .link-preview-domain i { margin-right: 4px; font-size: 10px; }
+        
+        /* NEW: Loading indicator for previews */
+        .preview-loading { padding: 20px; text-align: center; color: #999; }
+        .preview-loading i { margin-right: 8px; }
+        
+        /* NEW: Error message for failed previews */
+        .preview-error { padding: 10px; background: #ffe6e6; color: #cc0000; border-radius: 4px; font-size: 12px; margin-top: 10px; text-align: center; }
+        
         ${responsive ? `
         @media (max-width: 768px) {
             .container { padding: 10px; }
-            .popup { max-width: 90vw; }
+            .popup { max-width: 90vw; min-width: 200px; }
             .marker { width: 24px; height: 24px; font-size: 12px; }
+            .link-preview-image { height: 120px; }
         }` : ''}
     </style>
 </head>
@@ -1621,6 +1640,181 @@ class ExportManager {
             warning: 'exclamation-triangle',
             question: 'question-circle'
         };
+        
+        // Function to fetch link preview metadata
+        async function fetchLinkPreview(url) {
+            if (!url) return null;
+            
+            // Alternative CORS proxies
+            const proxyUrls = [
+                'https://api.allorigins.win/raw?url=',
+                'https://corsproxy.io/?',
+                'https://crossorigin.me/'
+            ];
+            
+            // Try each proxy until one works
+            for (let i = 0; i < proxyUrls.length; i++) {
+                try {
+                    const proxyUrl = proxyUrls[i];
+                    console.log('Trying proxy:', i, proxyUrl);
+                    
+                    const response = await fetch(proxyUrl + encodeURIComponent(url), {
+                        timeout: 8000 // 8 second timeout
+                    });
+                    
+                    if (!response.ok) {
+                        console.warn('Proxy ' + i + ' failed: ' + response.status);
+                        continue; // Try next proxy
+                    }
+                    
+                    const html = await response.text();
+                    
+                    // Parse the HTML to extract metadata
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    const getMetaContent = (name) => {
+                        const meta = doc.querySelector('meta[name="' + name + '"], meta[property="' + name + '"]');
+                        return meta ? meta.getAttribute('content') : null;
+                    };
+                    
+                    // Extract the domain safely
+                    let domain = '';
+                    try {
+                        const urlObj = new URL(url);
+                        domain = urlObj.hostname;
+                        // Remove www. prefix if present
+                        domain = domain.replace(/^www\\./, '');
+                    } catch (e) {
+                        domain = url.split('/')[2] || '';
+                    }
+                    
+                    // Extract title (prioritize Open Graph, then Twitter, then regular title)
+                    let title = getMetaContent('og:title') || 
+                                getMetaContent('twitter:title') || 
+                                doc.querySelector('title')?.textContent?.trim() || '';
+                    
+                    // Extract description
+                    let description = getMetaContent('og:description') || 
+                                     getMetaContent('twitter:description') || 
+                                     getMetaContent('description') || '';
+                    
+                    // Extract image (try multiple sources)
+                    let image = getMetaContent('og:image') || 
+                                getMetaContent('twitter:image') || 
+                                getMetaContent('twitter:image:src') || 
+                                '';
+                    
+                    // Make relative URLs absolute
+                    if (image && !image.startsWith('http')) {
+                        try {
+                            const baseUrl = new URL(url).origin;
+                            image = new URL(image, baseUrl).href;
+                        } catch (e) {
+                            // If we can't make it absolute, just leave it as is
+                        }
+                    }
+                    
+                    return {
+                        title: title,
+                        description: description,
+                        image: image,
+                        url: url,
+                        domain: domain
+                    };
+                } catch (error) {
+                    console.warn('Proxy ' + i + ' error: ', error.message);
+                    // Continue to next proxy
+                }
+            }
+            
+            // If all proxies fail, return basic info
+            console.log('All proxies failed, returning basic info');
+            let domain = '';
+            try {
+                domain = new URL(url).hostname.replace(/^www\\./, '');
+            } catch (e) {
+                domain = '';
+            }
+            
+            return {
+                title: '',
+                description: '',
+                image: '',
+                url: url,
+                domain: domain
+            };
+        }
+        
+        // Helper function to create a timeout promise
+        function timeout(ms) {
+            return new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
+        }
+        
+        // Function to create link preview element
+        function createLinkPreview(previewData) {
+            if (!previewData) return null;
+            
+            const previewDiv = document.createElement('div');
+            previewDiv.className = 'link-preview';
+            
+            // Create clickable link wrapper
+            const linkWrapper = document.createElement('a');
+            linkWrapper.href = previewData.url;
+            linkWrapper.target = '_blank';
+            linkWrapper.rel = 'noopener noreferrer';
+            
+            let html = '';
+            
+            // Add image if available
+            if (previewData.image) {
+                html += '<img class="link-preview-image" src="' + previewData.image + '" alt="' + (previewData.title || 'Preview') + '" onerror="this.style.display=\\'none\\'">';
+            } else {
+                html += '<div class="link-preview-image" style="display: flex; align-items: center; justify-content: center; color: #999; font-size: 14px;">';
+                html += '<i class="fas fa-link"></i> Link Preview';
+                html += '</div>';
+            }
+            
+            html += '<div class="link-preview-content">';
+            
+            // Add title if available
+            if (previewData.title) {
+                html += '<div class="link-preview-title">' + escapeHtml(previewData.title) + '</div>';
+            } else {
+                html += '<div class="link-preview-title">Link Preview</div>';
+            }
+            
+            // Add description if available
+            if (previewData.description) {
+                const shortDesc = previewData.description.length > 150 ? 
+                    previewData.description.substring(0, 150) + '...' : 
+                    previewData.description;
+                html += '<div class="link-preview-description">' + escapeHtml(shortDesc) + '</div>';
+            }
+            
+            // Add domain
+            if (previewData.domain) {
+                html += '<div class="link-preview-domain">';
+                html += '<i class="fas fa-globe"></i> ';
+                html += escapeHtml(previewData.domain);
+                html += '</div>';
+            }
+            
+            html += '</div>';
+            
+            linkWrapper.innerHTML = html;
+            previewDiv.appendChild(linkWrapper);
+            
+            return previewDiv;
+        }
+        
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
         
         function createMediaElement(url, type) {
             if (!url) return null;
@@ -1698,6 +1892,70 @@ class ExportManager {
             popup.style.top = top + 'px';
         }
         
+        async function showMarkerPopup(marker) {
+            popupTitle.textContent = marker.title;
+            popupDesc.textContent = marker.description;
+            popupLink.style.display = 'none';
+            popupMedia.innerHTML = '';
+            
+            if (marker.type === 'link' && marker.link) {
+                popupLink.href = marker.link;
+                popupLink.textContent = marker.link.length > 50 ? 
+                    marker.link.substring(0, 50) + '...' : marker.link;
+                popupLink.style.display = 'block';
+                
+                // Show loading indicator while fetching preview
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'preview-loading';
+                loadingDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading preview...';
+                popupMedia.appendChild(loadingDiv);
+                
+                // Fetch and display link preview
+                try {
+                    // Add timeout to prevent hanging
+                    const previewPromise = fetchLinkPreview(marker.link);
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Timeout')), 10000)
+                    );
+                    
+                    const previewData = await Promise.race([previewPromise, timeoutPromise]);
+                    
+                    loadingDiv.remove();
+                    
+                    if (previewData) {
+                        const preview = createLinkPreview(previewData);
+                        if (preview) {
+                            popupMedia.appendChild(preview);
+                        }
+                    } else {
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'preview-error';
+                        errorDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Could not load preview';
+                        popupMedia.appendChild(errorDiv);
+                    }
+                } catch (error) {
+                    loadingDiv.remove();
+                    console.error('Preview error:', error);
+                    
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'preview-error';
+                    if (error.message === 'Timeout') {
+                        errorDiv.innerHTML = '<i class="fas fa-clock"></i> Preview timed out';
+                    } else {
+                        errorDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Error loading preview';
+                    }
+                    popupMedia.appendChild(errorDiv);
+                }
+                
+            } else if (marker.type === 'video' && marker.video) {
+                const videoElement = createMediaElement(marker.video, 'video');
+                if (videoElement) popupMedia.appendChild(videoElement);
+            } else if (marker.type === 'audio' && marker.audio) {
+                const audioElement = createMediaElement(marker.audio, 'audio');
+                if (audioElement) popupMedia.appendChild(audioElement);
+            }
+        }
+        
         function renderMarkers() {
             markersContainer.innerHTML = '';
             const imgRect = image.getBoundingClientRect();
@@ -1714,26 +1972,10 @@ class ExportManager {
                 m.style.top = y + 'px';
                 m.innerHTML = '<i class="fas fa-' + markerIcons[marker.type] + '"></i>';
                 
-                m.addEventListener('click', function(e) {
+                m.addEventListener('click', async function(e) {
                     e.stopPropagation();
                     
-                    popupTitle.textContent = marker.title;
-                    popupDesc.textContent = marker.description;
-                    popupLink.style.display = 'none';
-                    popupMedia.innerHTML = '';
-                    
-                    if (marker.type === 'link' && marker.link) {
-                        popupLink.href = marker.link;
-                        popupLink.textContent = marker.link.length > 50 ? 
-                            marker.link.substring(0, 50) + '...' : marker.link;
-                        popupLink.style.display = 'block';
-                    } else if (marker.type === 'video' && marker.video) {
-                        const videoElement = createMediaElement(marker.video, 'video');
-                        if (videoElement) popupMedia.appendChild(videoElement);
-                    } else if (marker.type === 'audio' && marker.audio) {
-                        const audioElement = createMediaElement(marker.audio, 'audio');
-                        if (audioElement) popupMedia.appendChild(audioElement);
-                    }
+                    await showMarkerPopup(marker);
                     
                     positionPopup(x, y);
                     popup.style.display = 'block';
@@ -1757,8 +1999,15 @@ class ExportManager {
             }
         });
         
+        // Close popup when clicking the close button
+        document.querySelector('.popup-close').addEventListener('click', function() {
+            popup.style.display = 'none';
+        });
+        
         if (image.complete) {
             renderMarkers();
+        } else {
+            image.addEventListener('load', renderMarkers);
         }
     <\/script>
 </body>
